@@ -1,3 +1,4 @@
+//App.js
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar";
@@ -34,17 +35,19 @@ function App() {
             </RequireAuth>
           }
         />
-
-        {/* Aliases & stubs */}
-        <Route path="/new" element={<Navigate to="/tickets/new" replace />} />
         <Route
           path="/tickets"
           element={
             <RequireAuth>
-              <Placeholder title="Tickets" />
+              <TicketsList />
             </RequireAuth>
           }
         />
+
+        {/* Alias */}
+        <Route path="/new" element={<Navigate to="/tickets/new" replace />} />
+
+        {/* Other stubs (protected) */}
         <Route
           path="/rate-cards"
           element={
@@ -58,14 +61,6 @@ function App() {
           element={
             <RequireAuth>
               <Placeholder title="Reports" />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/tickets"
-          element={
-            <RequireAuth>
-              <TicketsList />
             </RequireAuth>
           }
         />

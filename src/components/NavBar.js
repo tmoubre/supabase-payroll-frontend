@@ -1,3 +1,4 @@
+//NavBar.js
 import React, { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { supabase } from "../supabaseClient";
@@ -25,9 +26,6 @@ export default function NavBar() {
       <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <NavLink to="/tickets/new" style={styles.link}>
           Create Ticket
-        </NavLink>
-        <NavLink to="/tickets" style={styles.link}>
-          Tickets
         </NavLink>
         <NavLink to="/tickets" style={styles.link}>
           Tickets

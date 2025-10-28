@@ -1,3 +1,4 @@
+// src/pages/SignIn.js
 import React, { useState } from "react";
 import { supabase } from "../supabaseClient";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -20,10 +21,7 @@ export default function SignIn() {
       password,
     });
     setBusy(false);
-    if (error) {
-      setMsg({ type: "error", text: error.message });
-      return;
-    }
+    if (error) return setMsg({ type: "error", text: error.message });
     navigate(redirectTo, { replace: true });
   }
 
@@ -38,7 +36,6 @@ export default function SignIn() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />
-
         <label style={styles.label}>Password</label>
         <input
           style={styles.input}
@@ -46,7 +43,6 @@ export default function SignIn() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-
         <button disabled={busy} style={styles.button}>
           {busy ? "Signing in…" : "Sign in"}
         </button>

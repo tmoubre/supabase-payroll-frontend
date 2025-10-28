@@ -5,6 +5,7 @@ import Home from "./pages/Home";
 import TicketForm from "./components/TicketForm";
 import SignIn from "./pages/SignIn";
 import RequireAuth from "./components/RequireAuth";
+import TicketsList from "./pages/TicketsList";
 
 function Placeholder({ title }) {
   return (
@@ -57,6 +58,14 @@ function App() {
           element={
             <RequireAuth>
               <Placeholder title="Reports" />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/tickets"
+          element={
+            <RequireAuth>
+              <TicketsList />
             </RequireAuth>
           }
         />

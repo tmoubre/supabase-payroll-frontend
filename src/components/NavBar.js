@@ -1,14 +1,28 @@
-// src/components/NavBar.js
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
+import { supabase } from "../supabaseClient";
 
 export default function NavBar() {
+  const [session, setSession] = useState(null);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) =>
+      setSession(s)
+    );
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+  }
+
   return (
     <nav style={styles.nav}>
       <Link to="/" style={styles.brand}>
         Ops Portal
       </Link>
-      <div style={{ display: "flex", gap: 12 }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
         <NavLink to="/tickets/new" style={styles.link}>
           Create Ticket
         </NavLink>
@@ -21,6 +35,15 @@ export default function NavBar() {
         <NavLink to="/reports" style={styles.link}>
           Reports
         </NavLink>
+        {session ? (
+          <button onClick={signOut} style={styles.btn}>
+            Sign out
+          </button>
+        ) : (
+          <NavLink to="/signin" style={styles.link}>
+            Sign in
+          </NavLink>
+        )}
       </div>
     </nav>
   );
@@ -44,4 +67,11 @@ const styles = {
     borderRadius: 8,
     background: isActive ? "#f3f4f6" : "transparent",
   }),
+  btn: {
+    padding: "6px 10px",
+    borderRadius: 8,
+    border: "1px solid #ddd",
+    background: "#fff",
+    cursor: "pointer",
+  },
 };

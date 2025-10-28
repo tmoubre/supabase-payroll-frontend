@@ -1,9 +1,10 @@
-// src/App.js
 import React from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar";
 import Home from "./pages/Home";
 import TicketForm from "./components/TicketForm";
+import SignIn from "./pages/SignIn";
+import RequireAuth from "./components/RequireAuth";
 
 function Placeholder({ title }) {
   return (
@@ -19,21 +20,46 @@ function App() {
     <div>
       <NavBar />
       <Routes>
-        {/* Landing */}
+        {/* Public */}
         <Route path="/" element={<Home />} />
+        <Route path="/signin" element={<SignIn />} />
 
-        {/* Ticket creation */}
-        <Route path="/tickets/new" element={<TicketForm />} />
-        {/* Alias so /new also goes to the form */}
+        {/* Protected */}
+        <Route
+          path="/tickets/new"
+          element={
+            <RequireAuth>
+              <TicketForm />
+            </RequireAuth>
+          }
+        />
+
+        {/* Aliases & stubs */}
         <Route path="/new" element={<Navigate to="/tickets/new" replace />} />
-
-        {/* Stubs for future pages */}
-        <Route path="/tickets" element={<Placeholder title="Tickets" />} />
+        <Route
+          path="/tickets"
+          element={
+            <RequireAuth>
+              <Placeholder title="Tickets" />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/rate-cards"
-          element={<Placeholder title="Rate Cards" />}
+          element={
+            <RequireAuth>
+              <Placeholder title="Rate Cards" />
+            </RequireAuth>
+          }
         />
-        <Route path="/reports" element={<Placeholder title="Reports" />} />
+        <Route
+          path="/reports"
+          element={
+            <RequireAuth>
+              <Placeholder title="Reports" />
+            </RequireAuth>
+          }
+        />
 
         {/* Fallback */}
         <Route path="*" element={<Home />} />

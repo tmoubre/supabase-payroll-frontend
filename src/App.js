@@ -1,11 +1,10 @@
 // src/App.js
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Routes, Route, Navigate } from "react-router-dom";
 import NavBar from "./components/NavBar";
 import Home from "./pages/Home";
 import TicketForm from "./components/TicketForm";
 
-// Use a named (non-default) component for simple placeholders
 function Placeholder({ title }) {
   return (
     <div style={{ padding: 24 }}>
@@ -20,19 +19,27 @@ function App() {
     <div>
       <NavBar />
       <Routes>
+        {/* Landing */}
         <Route path="/" element={<Home />} />
+
+        {/* Ticket creation */}
         <Route path="/tickets/new" element={<TicketForm />} />
+        {/* Alias so /new also goes to the form */}
+        <Route path="/new" element={<Navigate to="/tickets/new" replace />} />
+
+        {/* Stubs for future pages */}
         <Route path="/tickets" element={<Placeholder title="Tickets" />} />
         <Route
           path="/rate-cards"
           element={<Placeholder title="Rate Cards" />}
         />
         <Route path="/reports" element={<Placeholder title="Reports" />} />
+
+        {/* Fallback */}
         <Route path="*" element={<Home />} />
       </Routes>
     </div>
   );
 }
 
-// ONE default export — this line only
 export default App;

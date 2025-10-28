@@ -29,6 +29,9 @@ export default function NavBar() {
         <NavLink to="/tickets" style={styles.link}>
           Tickets
         </NavLink>
+        <NavLink to="/tickets" style={styles.link}>
+          Tickets
+        </NavLink>
         <NavLink to="/rate-cards" style={styles.link}>
           Rate Cards
         </NavLink>

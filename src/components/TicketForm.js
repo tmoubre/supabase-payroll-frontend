@@ -21,9 +21,6 @@ export default function TicketForm() {
   // equipment: { code, qty, hours, rate, notes }
   const [equipment, setEquipment] = useState([]);
 
-  // materials: reserved for future; keep empty array
-  const [materials, setMaterials] = useState([]);
-
   // services: { code, qty, rate, notes }
   const [services, setServices] = useState([]);
 
@@ -78,7 +75,7 @@ export default function TicketForm() {
   const setSvcField = (i, field, value) =>
     setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ----- submit calls the RPC (this is the complete snippet wired up) -----
+  // ----- submit calls the RPC -----
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
@@ -94,7 +91,7 @@ export default function TicketForm() {
         pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
         day_date: r.day_date || ticketDate,
-        // optional fields left null – backend fills defaults from employees
+        // backend fills defaults for these when null
         craft_code: null,
         schedule: null,
         bill_craft_code: null,
@@ -111,18 +108,15 @@ export default function TicketForm() {
 
     setBusy(true);
 
-    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    // COMPLETE RPC CALL SNIPPET:
     const { data, error } = await supabase.rpc('create_ticket_with_lines', {
       p_job_id: jobId,
       p_ticket_date: ticketDate,
       p_notes: notes || null,
       p_labor: laborPayload,         // [{ employee_id, pay_code_id, hours, day_date? }]
       p_equipment: equipmentPayload, // [{ code, qty, hours, rate, notes }]
-      p_materials: materials,        // [] for now
+      // p_materials omitted on purpose; SQL has a default so this is fine
       p_services: servicesPayload    // [{ code, qty, rate?, notes }]
     });
-    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     setBusy(false);
 
@@ -132,14 +126,12 @@ export default function TicketForm() {
       return;
     }
 
-    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    // COMPLETE "READ RETURN FIELDS" SNIPPET:
     const newId  = data?.[0]?.ticket_id;
     const newNo  = data?.[0]?.ticket_number;     // numeric ticket #
     const wkEnd  = data?.[0]?.weekending_date;   // computed in SQL
+    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
 
     setMessage({ type: 'success', text: `Ticket #${newNo} created (Week ending ${wkEnd}).` });
-    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
     // optionally reset form
     setJobId('');
@@ -257,7 +249,7 @@ export default function TicketForm() {
               <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
               <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
               <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
-              <input value={row.notes}onChange={(e)=>setSvcField(i,'notes',e.target.value)} style={input}/>
+              <input value={row.notes}onChange={(e)=>setSvcField(i,'notes', e.target.value)} style={input}/>
               <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
             </div>
           ))}

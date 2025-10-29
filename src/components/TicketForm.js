@@ -3,125 +3,122 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
 export default function TicketForm() {
-  // Base data
-  const [jobs, setJobs] = useState([]);
-  const [employees, setEmployees] = useState([]);
-  const [paycodes, setPaycodes] = useState([]);
-
-  // Ticket header
-  const [jobSearch, setJobSearch] = useState('');
+  // top-level ticket fields
   const [jobId, setJobId] = useState('');
   const [ticketDate, setTicketDate] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Line groups
-  const [laborRows, setLaborRows] = useState([
-    { employee_id: '', pay_code_id: '', hours: 8, day_date: '' }
-  ]);
-  const [equipRows, setEquipRows] = useState([]);   // { equipment_code, quantity, hours, rate, cost, notes }
-  const [matRows, setMatRows] = useState([]);       // { material_code, quantity, unit, rate, cost, notes }
-  const [svcRows, setSvcRows] = useState([]);       // { service_code, quantity, hours, rate, cost, notes }
+  // reference data
+  const [jobs, setJobs] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [paycodes, setPaycodes] = useState([]);
 
-  // UX
-  const [saving, setSaving] = useState(false);
+  // dynamic lines
+  const emptyLabor = { employee_id: '', pay_code_id: '', hours: '8', day_date: '' };
+  const [laborRows, setLaborRows] = useState([ { ...emptyLabor } ]);
+
+  const [equipmentRows, setEquipmentRows] = useState([]); // { code, qty, hours, rate, notes }
+  const [materialRows, setMaterialRows] = useState([]);   // { code, qty, unit, rate, notes }
+  const [serviceRows, setServiceRows] = useState([]);     // { code, qty, hours, rate, notes }
+
+  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // Load lookups
+  // ---------- data loads ----------
   useEffect(() => {
     let ignore = false;
     (async () => {
-      const [{ data: jobsData, error: jobsErr }, { data: empData, error: empErr }, { data: pcData, error: pcErr }] =
-        await Promise.all([
-          supabase.from('jobs').select('job_id, job_number, po_number, work_order').limit(1000),
-          supabase.from('employees').select('employee_id, badge_id, first_name, last_name').limit(2000),
-          supabase.from('paycodes').select('pay_code_id, code').order('code')
-        ]);
+      // RLS: requires policies for authenticated (already discussed)
+      const [{ data: jobData }, { data: empData }, { data: pcData }] = await Promise.all([
+        supabase.from('jobs').select('job_id, job_number, po_number, work_order').limit(5000),
+        supabase.from('employees').select('employee_id, emp_name').limit(5000),
+        supabase.from('paycodes').select('pay_code_id, code, description').limit(5000),
+      ]);
       if (ignore) return;
-      if (jobsErr || empErr || pcErr) {
-        setMessage({ type: 'error', text: (jobsErr||empErr||pcErr).message });
-        return;
-      }
-      setJobs(jobsData || []);
+      setJobs(jobData || []);
       setEmployees(empData || []);
       setPaycodes(pcData || []);
     })();
     return () => { ignore = true; };
   }, []);
 
-  // Search filter for jobs
+  // simple search box for jobs
+  const [jobSearch, setJobSearch] = useState('');
   const filteredJobs = useMemo(() => {
-    const q = jobSearch.trim().toLowerCase();
-    if (!q) return jobs;
+    const s = jobSearch.trim().toLowerCase();
+    if (!s) return jobs;
     return jobs.filter(j =>
-      (j.job_number || '').toLowerCase().includes(q) ||
-      (j.po_number || '').toLowerCase().includes(q) ||
-      (j.work_order || '').toLowerCase().includes(q)
+      (j.job_number || '').toLowerCase().includes(s) ||
+      (j.po_number || '').toLowerCase().includes(s) ||
+      (j.work_order || '').toLowerCase().includes(s)
     );
   }, [jobs, jobSearch]);
 
-  // Weekending preview (DB trigger sets the real value)
-  const weekendingPreview = useMemo(() => {
-    if (!ticketDate) return '';
-    const d = new Date(ticketDate);
-    const day = d.getUTCDay(); // 0=Sun
-    const diffToSun = (7 - day) % 7;
-    const sunday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + diffToSun));
-    return sunday.toISOString().slice(0, 10);
-  }, [ticketDate]);
+  // ---------- handlers ----------
+  function addLabor() { setLaborRows(r => [...r, { ...emptyLabor }]); }
+  function removeLabor(i) { setLaborRows(r => r.filter((_, idx) => idx !== i)); }
+  function updateLabor(i, field, value) {
+    setLaborRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  }
 
-  // Helpers
-  const addRow = (setter, blank) => setter(prev => [...prev, blank]);
-  const removeRow = (setter, i) => setter(prev => prev.filter((_, idx) => idx !== i));
-  const setRowField = (setter, i, key, val) =>
-    setter(prev => prev.map((r, idx) => (idx === i ? { ...r, [key]: val } : r)));
+  function addEquipment() { setEquipmentRows(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]); }
+  function updateEquipment(i, field, value) {
+    setEquipmentRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  }
+  function removeEquipment(i) { setEquipmentRows(r => r.filter((_, idx) => idx !== i)); }
 
+  function addMaterial() { setMaterialRows(r => [...r, { code: '', qty: '', unit: '', rate: '', notes: '' }]); }
+  function updateMaterial(i, field, value) {
+    setMaterialRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  }
+  function removeMaterial(i) { setMaterialRows(r => r.filter((_, idx) => idx !== i)); }
+
+  function addService() { setServiceRows(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]); }
+  function updateService(i, field, value) {
+    setServiceRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  }
+  function removeService(i) { setServiceRows(r => r.filter((_, idx) => idx !== i)); }
+
+  // ---------- submit ----------
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
-    if (!jobId || !ticketDate) {
-      setMessage({ type: 'error', text: 'Job and Ticket Date are required.' });
+
+    // required fields
+    if (!jobId) {
+      setMessage({ type: 'error', text: 'Please select a Job before saving.' });
+      return;
+    }
+    if (!ticketDate) {
+      setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
       return;
     }
 
-    // Prepare payloads (filter out empty rows)
     const labor = laborRows
       .filter(r => r.employee_id && r.pay_code_id && Number(r.hours) > 0)
       .map(r => ({
-        ...r,
+        employee_id: r.employee_id,
+        pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
-        day_date: r.day_date || ticketDate
+        day_date: r.day_date || ticketDate,
+        craft_code: null,
+        schedule: null,
+        bill_craft_code: null,
+        bill_schedule: null
       }));
 
-    const equipment = equipRows
-      .filter(r => r.equipment_code && (Number(r.hours) > 0 || Number(r.quantity) > 0))
-      .map(r => ({
-        ...r,
-        hours: r.hours ? Number(r.hours) : null,
-        quantity: r.quantity ? Number(r.quantity) : null,
-        rate: r.rate ? Number(r.rate) : null,
-        cost: r.cost ? Number(r.cost) : null
-      }));
+    // equipment/materials/services can be left empty; send arrays anyway for future expansion
+    const equipment = equipmentRows.filter(r =>
+      r.code || r.qty || r.hours || r.rate || r.notes
+    );
+    const materials = materialRows.filter(r =>
+      r.code || r.qty || r.unit || r.rate || r.notes
+    );
+    const services = serviceRows.filter(r =>
+      r.code || r.qty || r.hours || r.rate || r.notes
+    );
 
-    const materials = matRows
-      .filter(r => r.material_code && Number(r.quantity) > 0)
-      .map(r => ({
-        ...r,
-        quantity: Number(r.quantity),
-        rate: r.rate ? Number(r.rate) : null,
-        cost: r.cost ? Number(r.cost) : null
-      }));
-
-    const services = svcRows
-      .filter(r => r.service_code && (Number(r.hours) > 0 || Number(r.quantity) > 0))
-      .map(r => ({
-        ...r,
-        hours: r.hours ? Number(r.hours) : null,
-        quantity: r.quantity ? Number(r.quantity) : null,
-        rate: r.rate ? Number(r.rate) : null,
-        cost: r.cost ? Number(r.cost) : null
-      }));
-
-    setSaving(true);
+    setBusy(true);
     const { data, error } = await supabase.rpc('create_ticket_with_lines', {
       p_job_id: jobId,
       p_ticket_date: ticketDate,
@@ -131,50 +128,51 @@ export default function TicketForm() {
       p_materials: materials,
       p_services: services
     });
-    setSaving(false);
+    setBusy(false);
 
     if (error) {
-      const fnMissing = /function .* does not exist/i.test(error.message);
-      const rlsHint = /row-level security/i.test(error.message)
-        ? ' RLS may be blocking inserts; confirm your policies or use SECURITY DEFINER on the function.'
-        : '';
-      setMessage({
-        type: 'error',
-        text: fnMissing
-          ? 'RPC function create_ticket_with_lines not found. Run the SQL to create it, then try again.'
-          : `Failed to save: ${error.message}.${rlsHint}`
-      });
+      console.error('RPC error:', error);
+      setMessage({ type: 'error', text: error.message || 'Failed to create ticket.' });
       return;
     }
 
-    const newId = data?.[0]?.ticket_id || '(created)';
-    setMessage({ type: 'success', text: `Ticket ${newId} created with all lines.` });
+    const newId = data?.[0]?.ticket_id;
+    const newNo = data?.[0]?.ticket_number; // <-- numeric ticket number from DB
+    setMessage({ type: 'success', text: `Ticket #${newNo} created.` });
 
-    // reset lines; keep job/date for speed if you want
-    setLaborRows([{ employee_id: '', pay_code_id: '', hours: 8, day_date: '' }]);
-    setEquipRows([]); setMatRows([]); setSvcRows([]);
+    // reset minimal fields but keep lines
+    setJobId('');
+    setTicketDate('');
+    setNotes('');
+    setLaborRows([ { ...emptyLabor } ]);
+    setEquipmentRows([]);
+    setMaterialRows([]);
+    setServiceRows([]);
+
+    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo });
   }
 
+  // ---------- UI ----------
   return (
-    <div style={styles.wrapper}>
-      <h2 style={{ margin: 0 }}>Create Ticket + Lines</h2>
+    <div style={{ maxWidth: 1100, margin: '24px auto', padding: 16 }}>
+      <form onSubmit={handleSubmit}>
+        <div style={card}>
+          <h2 style={{ marginTop: 0 }}>Create Ticket + Lines</h2>
 
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 16 }}>
-        {/* Header */}
-        <section style={styles.section}>
-          <div style={styles.grid3}>
+          <div style={grid3}>
             <div>
-              <label style={styles.label}>Search Jobs</label>
+              <label>Search Jobs</label>
               <input
-                style={styles.input}
                 placeholder="Job #, PO, or WO"
                 value={jobSearch}
                 onChange={(e) => setJobSearch(e.target.value)}
+                style={input}
               />
             </div>
+
             <div>
-              <label style={styles.label}>Job</label>
-              <select style={styles.input} value={jobId} onChange={(e) => setJobId(e.target.value)}>
+              <label>Job</label>
+              <select value={jobId} onChange={(e) => setJobId(e.target.value)} style={select}>
                 <option value="">— Select Job —</option>
                 {filteredJobs.map(j => (
                   <option key={j.job_id} value={j.job_id}>
@@ -183,136 +181,124 @@ export default function TicketForm() {
                 ))}
               </select>
             </div>
+
             <div>
-              <label style={styles.label}>Ticket Date</label>
-              <input style={styles.input} type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} />
-              {!!ticketDate && <div style={styles.hint}>Weekending (preview): <b>{weekendingPreview}</b></div>}
+              <label>Ticket Date</label>
+              <input type="date" value={ticketDate} onChange={(e) => setTicketDate(e.target.value)} style={input} />
             </div>
           </div>
 
-          <label style={styles.label}>Notes (optional)</label>
-          <input style={styles.input} value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="e.g., night shift, special access" />
-        </section>
+          <div style={{ marginTop: 10 }}>
+            <label>Notes (optional)</label>
+            <input
+              placeholder="e.g., night shift, special access"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              style={input}
+            />
+          </div>
+        </div>
 
         {/* Labor */}
-        <section style={styles.section}>
-          <div style={styles.headRow}>
-            <h3 style={{ margin: 0 }}>Labor Lines</h3>
-            <button type="button" onClick={()=>addRow(setLaborRows, { employee_id:'', pay_code_id:'', hours:8, day_date:'' })}>+ Add labor</button>
-          </div>
-          <div style={styles.tableHead}>
+        <div style={card}>
+          <SectionTitle>Labor Lines</SectionTitle>
+
+          <div style={{ fontWeight: 700, display: 'grid', gridTemplateColumns: '1.2fr 1fr .6fr .9fr auto', gap: 12, marginBottom: 6 }}>
             <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day (optional)</div><div></div>
           </div>
-          {laborRows.map((r,i)=>(
-            <div key={`lab-${i}`} style={styles.tableRow}>
-              <select style={styles.input}
-                      value={r.employee_id}
-                      onChange={(e)=>setRowField(setLaborRows,i,'employee_id',e.target.value)}>
+
+          {laborRows.map((row, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr .6fr .9fr auto', gap: 12, alignItems: 'center', marginBottom: 8 }}>
+              <select value={row.employee_id} onChange={(e)=>updateLabor(i, 'employee_id', e.target.value)} style={select}>
                 <option value="">Select employee</option>
-                {employees.map(emp => (
-                  <option key={emp.employee_id} value={emp.employee_id}>
-                    {emp.badge_id} — {emp.first_name} {emp.last_name}
-                  </option>
-                ))}
+                {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.emp_name}</option>)}
               </select>
-              <select style={styles.input}
-                      value={r.pay_code_id}
-                      onChange={(e)=>setRowField(setLaborRows,i,'pay_code_id',e.target.value)}>
+
+              <select value={row.pay_code_id} onChange={(e)=>updateLabor(i, 'pay_code_id', e.target.value)} style={select}>
                 <option value="">Pay code</option>
-                {paycodes.map(pc => (
-                  <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code}</option>
-                ))}
+                {paycodes.map(pc => <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code} — {pc.description}</option>)}
               </select>
-              <input type="number" step="0.25" style={styles.input}
-                     value={r.hours}
-                     onChange={(e)=>setRowField(setLaborRows,i,'hours',e.target.value)} />
-              <input type="date" style={styles.input}
-                     value={r.day_date||''}
-                     onChange={(e)=>setRowField(setLaborRows,i,'day_date',e.target.value)} />
-              <button type="button" onClick={()=>removeRow(setLaborRows,i)}>Remove</button>
+
+              <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>updateLabor(i, 'hours', e.target.value)} style={input} />
+
+              <input type="date" value={row.day_date} onChange={(e)=>updateLabor(i, 'day_date', e.target.value)} style={input} />
+
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => removeLabor(i)} style={btnLight}>Remove</button>
+              </div>
             </div>
           ))}
-        </section>
+
+          <div>
+            <button type="button" onClick={addLabor} style={btn}>
+              + Add labor
+            </button>
+          </div>
+        </div>
 
         {/* Equipment */}
-        <section style={styles.section}>
-          <div style={styles.headRow}>
-            <h3 style={{ margin: 0 }}>Equipment</h3>
-            <button type="button" onClick={()=>addRow(setEquipRows, { equipment_code:'', quantity:'', hours:'', rate:'', cost:'', notes:'' })}>+ Add equipment</button>
-          </div>
-          <div style={styles.tableHead}>
-            <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Cost</div><div>Notes</div><div></div>
-          </div>
-          {equipRows.map((r,i)=>(
-            <div key={`eq-${i}`} style={styles.tableRow7}>
-              <input style={styles.input} placeholder="equipment_code" value={r.equipment_code||''} onChange={e=>setRowField(setEquipRows,i,'equipment_code',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.quantity||''} onChange={e=>setRowField(setEquipRows,i,'quantity',e.target.value)} />
-              <input style={styles.input} type="number" step="0.25" value={r.hours||''} onChange={e=>setRowField(setEquipRows,i,'hours',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.rate||''} onChange={e=>setRowField(setEquipRows,i,'rate',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.cost||''} onChange={e=>setRowField(setEquipRows,i,'cost',e.target.value)} />
-              <input style={styles.input} placeholder="notes" value={r.notes||''} onChange={e=>setRowField(setEquipRows,i,'notes',e.target.value)} />
-              <button type="button" onClick={()=>removeRow(setEquipRows,i)}>Remove</button>
-            </div>
+        <div style={card}>
+          <SectionTitle>Equipment</SectionTitle>
+          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Hours','Rate','Notes']} />
+          {equipmentRows.map((row, i) => (
+            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
+              <input value={row.code} onChange={(e)=>updateEquipment(i,'code',e.target.value)} style={input}/>
+              <input value={row.qty} onChange={(e)=>updateEquipment(i,'qty',e.target.value)} style={input}/>
+              <input value={row.hours} onChange={(e)=>updateEquipment(i,'hours',e.target.value)} style={input}/>
+              <input value={row.rate} onChange={(e)=>updateEquipment(i,'rate',e.target.value)} style={input}/>
+              <input value={row.notes} onChange={(e)=>updateEquipment(i,'notes',e.target.value)} style={input}/>
+              <button type="button" onClick={()=>removeEquipment(i)} style={btnLight}>Remove</button>
+            </Row>
           ))}
-        </section>
+          <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
+        </div>
 
         {/* Materials */}
-        <section style={styles.section}>
-          <div style={styles.headRow}>
-            <h3 style={{ margin: 0 }}>Materials</h3>
-            <button type="button" onClick={()=>addRow(setMatRows, { material_code:'', quantity:'', unit:'', rate:'', cost:'', notes:'' })}>+ Add material</button>
-          </div>
-          <div style={styles.tableHead}>
-            <div>Code</div><div>Qty</div><div>Unit</div><div>Rate</div><div>Cost</div><div>Notes</div><div></div>
-          </div>
-          {matRows.map((r,i)=>(
-            <div key={`mat-${i}`} style={styles.tableRow7}>
-              <input style={styles.input} placeholder="material_code" value={r.material_code||''} onChange={e=>setRowField(setMatRows,i,'material_code',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.quantity||''} onChange={e=>setRowField(setMatRows,i,'quantity',e.target.value)} />
-              <input style={styles.input} placeholder="unit" value={r.unit||''} onChange={e=>setRowField(setMatRows,i,'unit',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.rate||''} onChange={e=>setRowField(setMatRows,i,'rate',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.cost||''} onChange={e=>setRowField(setMatRows,i,'cost',e.target.value)} />
-              <input style={styles.input} placeholder="notes" value={r.notes||''} onChange={e=>setRowField(setMatRows,i,'notes',e.target.value)} />
-              <button type="button" onClick={()=>removeRow(setMatRows,i)}>Remove</button>
-            </div>
+        <div style={card}>
+          <SectionTitle>Materials</SectionTitle>
+          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Unit','Rate','Notes']} />
+          {materialRows.map((row, i) => (
+            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
+              <input value={row.code} onChange={(e)=>updateMaterial(i,'code',e.target.value)} style={input}/>
+              <input value={row.qty} onChange={(e)=>updateMaterial(i,'qty',e.target.value)} style={input}/>
+              <input value={row.unit} onChange={(e)=>updateMaterial(i,'unit',e.target.value)} style={input}/>
+              <input value={row.rate} onChange={(e)=>updateMaterial(i,'rate',e.target.value)} style={input}/>
+              <input value={row.notes} onChange={(e)=>updateMaterial(i,'notes',e.target.value)} style={input}/>
+              <button type="button" onClick={()=>removeMaterial(i)} style={btnLight}>Remove</button>
+            </Row>
           ))}
-        </section>
+          <button type="button" onClick={addMaterial} style={btn}>+ Add material</button>
+        </div>
 
         {/* Services */}
-        <section style={styles.section}>
-          <div style={styles.headRow}>
-            <h3 style={{ margin: 0 }}>Services</h3>
-            <button type="button" onClick={()=>addRow(setSvcRows, { service_code:'', quantity:'', hours:'', rate:'', cost:'', notes:'' })}>+ Add service</button>
-          </div>
-          <div style={styles.tableHead}>
-            <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Cost</div><div>Notes</div><div></div>
-          </div>
-          {svcRows.map((r,i)=>(
-            <div key={`svc-${i}`} style={styles.tableRow7}>
-              <input style={styles.input} placeholder="service_code" value={r.service_code||''} onChange={e=>setRowField(setSvcRows,i,'service_code',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.quantity||''} onChange={e=>setRowField(setSvcRows,i,'quantity',e.target.value)} />
-              <input style={styles.input} type="number" step="0.25" value={r.hours||''} onChange={e=>setRowField(setSvcRows,i,'hours',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.rate||''} onChange={e=>setRowField(setSvcRows,i,'rate',e.target.value)} />
-              <input style={styles.input} type="number" step="0.01" value={r.cost||''} onChange={e=>setRowField(setSvcRows,i,'cost',e.target.value)} />
-              <input style={styles.input} placeholder="notes" value={r.notes||''} onChange={e=>setRowField(setSvcRows,i,'notes',e.target.value)} />
-              <button type="button" onClick={()=>removeRow(setSvcRows,i)}>Remove</button>
-            </div>
+        <div style={card}>
+          <SectionTitle>Services</SectionTitle>
+          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Hours','Rate','Notes']} />
+          {serviceRows.map((row, i) => (
+            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
+              <input value={row.code} onChange={(e)=>updateService(i,'code',e.target.value)} style={input}/>
+              <input value={row.qty} onChange={(e)=>updateService(i,'qty',e.target.value)} style={input}/>
+              <input value={row.hours} onChange={(e)=>updateService(i,'hours',e.target.value)} style={input}/>
+              <input value={row.rate} onChange={(e)=>updateService(i,'rate',e.target.value)} style={input}/>
+              <input value={row.notes} onChange={(e)=>updateService(i,'notes',e.target.value)} style={input}/>
+              <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
+            </Row>
           ))}
-        </section>
+          <button type="button" onClick={addService} style={btn}>+ Add service</button>
+        </div>
 
-        <button disabled={saving} style={styles.button}>
-          {saving ? 'Saving…' : 'Create Ticket + Lines'}
-        </button>
+        <div style={{ marginTop: 12 }}>
+          <button type="submit" disabled={busy} style={submitBtn}>
+            {busy ? 'Saving…' : 'Create Ticket + Lines'}
+          </button>
+        </div>
 
         {message && (
-          <div
-            style={{
-              marginTop: 8, padding: '10px 12px', borderRadius: 8,
-              background: message.type === 'success' ? '#e8f7ed' : '#fdeaea',
-              color: message.type === 'success' ? '#155d27' : '#7a1e1e',
-              border: `1px solid ${message.type === 'success' ? '#b3e6c3' : '#f0c2c2'}`
-            }}
-          >
+          <div style={{
+            marginTop: 12, padding: '10px 12px', borderRadius: 10,
+            background: message.type === 'error' ? '#fdeaea' : '#e8f7ed',
+            border: `1px solid ${message.type === 'error' ? '#f0c2c2' : '#b3e6c3'}`
+          }}>
             {message.text}
           </div>
         )}
@@ -321,27 +307,30 @@ export default function TicketForm() {
   );
 }
 
-const styles = {
-  wrapper: {
-    maxWidth: 1100, margin: '24px auto', padding: 20,
-    borderRadius: 12, border: '1px solid #eee', background: '#fff',
-    boxShadow: '0 2px 10px rgba(0,0,0,0.04)',
-  },
-  section: { border: '1px solid #eee', borderRadius: 10, padding: 12 },
-  label: { fontWeight: 600, marginBottom: 4, display: 'block' },
-  input: { padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd', width: '100%' },
-  hint: { fontSize: 12, color: '#666', marginTop: 6 },
-  headRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  grid3: { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 },
-  tableHead: {
-    display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8,
-    fontWeight: 600, color: '#444', marginBottom: 6
-  },
-  tableRow: { display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr auto', gap: 8, marginBottom: 8 },
-  tableRow7: { display: 'grid', gridTemplateColumns: '1.2fr .8fr .8fr .8fr .8fr 1fr auto', gap: 8, marginBottom: 8 },
-  button: {
-    marginTop: 6, padding: '10px 14px', borderRadius: 10,
-    background: '#111827', color: '#fff', border: 'none', cursor: 'pointer', fontWeight: 600
-  }
-};
+/* ---------- tiny presentational helpers ---------- */
+function SectionTitle({ children }) {
+  return <h3 style={{ margin: '6px 0 12px' }}>{children}</h3>;
+}
+function HeaderRow({ cols, labels }) {
+  return (
+    <div style={{ fontWeight: 700, display: 'grid', gridTemplateColumns: cols, gap: 12, marginBottom: 6 }}>
+      {labels.map((x, i) => <div key={i}>{x}</div>)}
+    </div>
+  );
+}
+function Row({ cols, children }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', marginBottom: 8 }}>
+      {children}
+    </div>
+  );
+}
 
+/* ---------- styles ---------- */
+const card = { background: '#fff', border: '1px solid #eee', borderRadius: 12, padding: 16, marginBottom: 14, boxShadow: '0 2px 12px rgba(0,0,0,.04)' };
+const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 };
+const input = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd' };
+const select = input;
+const btn = { padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontWeight: 600 };
+const btnLight = { padding: '6px 10px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' };
+const submitBtn = { width: '100%', maxWidth: 420, padding: '12px 14px', fontWeight: 800, borderRadius: 10, border: 'none', background: '#0f172a', color: '#fff', cursor: 'pointer' };

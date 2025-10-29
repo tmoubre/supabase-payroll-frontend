@@ -35,7 +35,7 @@ export default function TicketForm() {
   const [emailOptions, setEmailOptions] = useState([]);
 
   // ---------- lines ----------
-  const emptyLabor = { employee_id: '', pay_code_id: '', hours: '8', day_date: '' };
+  const emptyLabor = { employee_code: '', employee_id: '', pay_code_id: '', hours: '8' };
   const [labor, setLabor] = useState([{ ...emptyLabor }]);
   const [equipment, setEquipment] = useState([]); // { code, qty, hours, rate, notes }
   const [services, setServices] = useState([]);   // { code, qty, rate, notes }
@@ -55,9 +55,17 @@ export default function TicketForm() {
         .select('job_id, job_number, po_number, location, customer_id, customers:customer_id ( customer_name )')
         .order('job_number');
 
-      const empQ = supabase.from('employees').select('employee_id, name').order('name');
+      // include employee_code for code-to-name autofill
+      const empQ = supabase
+        .from('employees')
+        .select('employee_id, name, employee_code')
+        .order('employee_code', { nulls: 'last' })
+        .order('name');
 
-      const pcQ = supabase.from('paycodes').select('pay_code_id, code, description').order('code');
+      const pcQ = supabase
+        .from('paycodes')
+        .select('pay_code_id, code, description')
+        .order('code');
 
       const poQ = supabase.from('jobs').select('po_number').not('po_number', 'is', null);
       const locQ = supabase.from('jobs').select('location').not('location', 'is', null);
@@ -165,10 +173,25 @@ export default function TicketForm() {
   const setSvcField = (i, field, value) =>
     setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
+  // employee code -> employee_id autofill
+  function applyEmployeeCode(i, code) {
+    const trimmed = (code || '').trim().toLowerCase();
+    setLabor(rows => {
+      const next = [...rows];
+      const hit = employees.find(e => (e.employee_code || '').toLowerCase() === trimmed);
+      if (hit) {
+        next[i] = { ...next[i], employee_code: code, employee_id: hit.employee_id };
+      } else {
+        next[i] = { ...next[i], employee_code: code };
+      }
+      return next;
+    });
+  }
+
   // detect any line inputs (for cancel confirmation)
   function hasAnyLineInput() {
     const laborFilled = labor.some(r =>
-      r.employee_id || r.pay_code_id || (Number(r.hours) || 0) > 0 || r.day_date
+      r.employee_id || r.employee_code || r.pay_code_id || (Number(r.hours) || 0) > 0
     );
     const eqFilled = equipment.some(r => r.code || r.qty || r.hours || r.rate || r.notes);
     const svcFilled = services.some(r => r.code || r.qty || r.rate || r.notes);
@@ -185,7 +208,7 @@ export default function TicketForm() {
     const { error } = await supabase
       .from('time_tickets')
       .delete()
-      .eq('id', draftTicketId);
+      .eq('ticket_id', draftTicketId); // fix: correct PK column
     setBusy(false);
     if (error) {
       console.error('cancelDraft error:', error);
@@ -223,7 +246,8 @@ export default function TicketForm() {
         employee_id: r.employee_id,
         pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
-        day_date: r.day_date || ticketDate,
+        // always match the ticket date
+        day_date: ticketDate,
         craft_code: null,
         schedule: null,
         bill_craft_code: null,
@@ -387,24 +411,46 @@ export default function TicketForm() {
       {/* LABOR */}
       <div style={card}>
         <h3 style={{ margin: '6px 0 12px' }}>Labor Lines</h3>
-        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, marginBottom:6 }}>
-          <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day</div><div></div>
+
+        {/* header */}
+        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'140px 1fr .9fr .6fr auto', gap:12, marginBottom:6 }}>
+          <div>Emp Code</div>
+          <div>Employee</div>
+          <div>Pay Code</div>
+          <div>Hours</div>
+          <div></div>
         </div>
 
+        {/* rows */}
         {labor.map((row, i) => (
-          <div key={i} style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+          <div key={i} style={{ display:'grid', gridTemplateColumns:'140px 1fr .9fr .6fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+            {/* Employee Code (autofills Employee) */}
+            <input
+              placeholder="e.g., E123"
+              value={row.employee_code || ''}
+              onChange={(e)=>setLaborField(i,'employee_code',e.target.value)}
+              onBlur={(e)=>applyEmployeeCode(i, e.target.value)}
+              style={input}
+            />
+
+            {/* Employee */}
             <select value={row.employee_id} onChange={(e)=>setLaborField(i,'employee_id',e.target.value)} style={input}>
               <option value="">Select employee</option>
-              {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.name}</option>)}
+              {employees.map(emp => (
+                <option key={emp.employee_id} value={emp.employee_id}>
+                  {emp.employee_code ? `${emp.employee_code} — ` : ''}{emp.name}
+                </option>
+              ))}
             </select>
 
+            {/* Pay Code */}
             <select value={row.pay_code_id} onChange={(e)=>setLaborField(i,'pay_code_id',e.target.value)} style={input}>
               <option value="">Pay code</option>
               {paycodes.map(pc => <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code} — {pc.description}</option>)}
             </select>
 
+            {/* Hours */}
             <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>setLaborField(i,'hours',e.target.value)} style={input} />
-            <input type="date" value={row.day_date} onChange={(e)=>setLaborField(i,'day_date',e.target.value)} style={input} />
 
             <button type="button" onClick={()=>removeLabor(i)} style={btnLight}>Remove</button>
           </div>
@@ -476,3 +522,4 @@ const input = { width:'100%', padding:'10px 12px', borderRadius:8, border:'1px s
 const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
 const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };
 const submitBtn = { width:'100%', maxWidth:420, padding:'12px 14px', fontWeight:800, borderRadius:10, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer' };
+

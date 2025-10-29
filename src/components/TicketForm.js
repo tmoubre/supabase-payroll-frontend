@@ -5,9 +5,8 @@ import { supabase } from '../supabaseClient';
 function weekendingFrom(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
-  // Sunday as week end: add days until Sunday
   const dow = d.getDay(); // 0..6 (0 = Sun)
-  const add = (7 - dow) % 7;
+  const add = (7 - dow) % 7; // Sunday end
   const out = new Date(d);
   out.setDate(out.getDate() + add);
   return out.toISOString().slice(0, 10);
@@ -21,7 +20,7 @@ export default function TicketForm() {
   const [weekending, setWeekending] = useState('');
   const [poNumber, setPoNumber] = useState('');
   const [location, setLocation] = useState('');
-  const [customerName, setCustomerName] = useState(''); // read-only display
+  const [customerName, setCustomerName] = useState(''); // read-only
   const [email, setEmail] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -51,23 +50,15 @@ export default function TicketForm() {
   useEffect(() => {
     let ignore = false;
     (async () => {
-      // join jobs → customers to get customer_name for display
       const jobsQ = supabase
         .from('jobs')
         .select('job_id, job_number, po_number, location, customer_id, customers:customer_id ( customer_name )')
         .order('job_number');
 
-      const empQ = supabase
-        .from('employees')
-        .select('employee_id, name')
-        .order('name');
+      const empQ = supabase.from('employees').select('employee_id, name').order('name');
 
-      const pcQ = supabase
-        .from('paycodes')
-        .select('pay_code_id, code, description')
-        .order('code');
+      const pcQ = supabase.from('paycodes').select('pay_code_id, code, description').order('code');
 
-      // suggestions for PO/location from jobs (distinct), emails from customers
       const poQ = supabase.from('jobs').select('po_number').not('po_number', 'is', null);
       const locQ = supabase.from('jobs').select('location').not('location', 'is', null);
       const emQ = supabase.from('customers').select('contact_email').not('contact_email', 'is', null);
@@ -125,10 +116,8 @@ export default function TicketForm() {
   // ---------- auto-create DRAFT HEADER when job + date are set ----------
   useEffect(() => {
     let ignore = false;
-
     async function createHeaderIfNeeded() {
       if (!jobId || !ticketDate || draftTicketId) return;
-
       setBusy(true);
       const { data, error } = await supabase.rpc('create_ticket_header', {
         p_job_id: jobId,
@@ -141,15 +130,12 @@ export default function TicketForm() {
         }
       });
       setBusy(false);
-
       if (ignore) return;
-
       if (error) {
         console.error('create_ticket_header error:', error);
         setMessage({ type: 'error', text: 'Could not create draft ticket header.' });
         return;
       }
-
       const row = Array.isArray(data) ? data[0] : data;
       if (row?.ticket_id) {
         setDraftTicketId(row.ticket_id);
@@ -158,29 +144,70 @@ export default function TicketForm() {
         setMessage({ type: 'success', text: `Draft created — Ticket #${row.ticket_number}` });
       }
     }
-
     createHeaderIfNeeded();
     return () => { ignore = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, ticketDate]);
 
-  // ---------- labor helpers ----------
+  // ---------- helpers ----------
   const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
   const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
   const setLaborField = (i, field, value) =>
     setLabor(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ---------- equipment helpers ----------
   const addEquipment = () => setEquipment(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]);
   const removeEquipment = (i) => setEquipment(r => r.filter((_, idx) => idx !== i));
   const setEqField = (i, field, value) =>
     setEquipment(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ---------- services helpers ----------
   const addService = () => setServices(r => [...r, { code: '', qty: '', rate: '', notes: '' }]);
   const removeService = (i) => setServices(r => r.filter((_, idx) => idx !== i));
   const setSvcField = (i, field, value) =>
     setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  // detect any line inputs (for cancel confirmation)
+  function hasAnyLineInput() {
+    const laborFilled = labor.some(r =>
+      r.employee_id || r.pay_code_id || (Number(r.hours) || 0) > 0 || r.day_date
+    );
+    const eqFilled = equipment.some(r => r.code || r.qty || r.hours || r.rate || r.notes);
+    const svcFilled = services.some(r => r.code || r.qty || r.rate || r.notes);
+    return laborFilled || eqFilled || svcFilled;
+  }
+
+  async function cancelDraft() {
+    if (!draftTicketId) return;
+    if (hasAnyLineInput()) {
+      const ok = window.confirm('You have line inputs on this draft. Delete the draft anyway?');
+      if (!ok) return;
+    }
+    setBusy(true);
+    const { error } = await supabase
+      .from('time_tickets')
+      .delete()
+      .eq('id', draftTicketId);
+    setBusy(false);
+    if (error) {
+      console.error('cancelDraft error:', error);
+      setMessage({ type: 'error', text: error.message || 'Failed to cancel draft.' });
+      return;
+    }
+    // clear everything
+    setDraftTicketId(null);
+    setSavedTicketNo(null);
+    setJobId('');
+    setTicketDate('');
+    setWeekending('');
+    setPoNumber('');
+    setLocation('');
+    setCustomerName('');
+    setEmail('');
+    setNotes('');
+    setLabor([{ ...emptyLabor }]);
+    setEquipment([]);
+    setServices([]);
+    setMessage({ type: 'success', text: 'Draft ticket removed.' });
+  }
 
   // ---------- submit via RPC ----------
   async function handleSubmit(e) {
@@ -190,7 +217,6 @@ export default function TicketForm() {
     if (!jobId) return setMessage({ type: 'error', text: 'Please select a Job.' });
     if (!ticketDate) return setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
 
-    // sanitize payloads
     const laborPayload = labor
       .filter(r => r.employee_id && r.pay_code_id && Number(r.hours) > 0)
       .map(r => ({
@@ -216,7 +242,6 @@ export default function TicketForm() {
 
     let resp = { data: null, error: null };
     if (draftTicketId) {
-      // append lines to the already-created header
       const { error } = await supabase.rpc('append_lines_to_ticket', {
         p_ticket_id: draftTicketId,
         p_labor: laborPayload,
@@ -226,14 +251,13 @@ export default function TicketForm() {
       resp.error = error;
       resp.data = [{ ticket_id: draftTicketId, ticket_number: savedTicketNo, weekending_date: weekending }];
     } else {
-      // fallback (if for any reason the draft doesn't exist)
       resp = await supabase.rpc('create_ticket_with_lines', {
         p_job_id: jobId,
         p_ticket_date: ticketDate,
         p_notes: notes || null,
         p_labor: laborPayload,
         p_equipment: equipmentPayload,
-        p_materials: [],             // not used yet
+        p_materials: [],
         p_services: servicesPayload
       });
     }
@@ -251,14 +275,13 @@ export default function TicketForm() {
     const newNo  = row?.ticket_number ?? savedTicketNo ?? '(New)';
     const wkEnd  = row?.weekending_date ?? weekendingFrom(ticketDate);
 
-    // preserve savedTicketNo; show confirmation
     if (newId && !draftTicketId) setDraftTicketId(newId);
     setSavedTicketNo(newNo);
     setWeekending(wkEnd);
 
     setMessage({ type: 'success', text: `Ticket #${newNo} saved (Week ending ${wkEnd}).` });
 
-    // reset lines but keep header to speed multiple entries
+    // reset lines but keep header visible
     setLabor([{ ...emptyLabor }]);
     setEquipment([]);
     setServices([]);
@@ -270,13 +293,26 @@ export default function TicketForm() {
     <div style={{ maxWidth: 1100, margin: '24px auto', padding: 16 }}>
       {/* HEADER CARD */}
       <div style={card}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap: 12 }}>
           <h2 style={{ marginTop: 0 }}>TimeTicket Entry</h2>
-          <div style={{ fontWeight:700 }}>
-            Ticket #&nbsp;
-            <span style={{ color: savedTicketNo ? '#111' : '#d00' }}>
-              {savedTicketNo ?? '(New)'}
-            </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ fontWeight:700 }}>
+              Ticket #&nbsp;
+              <span style={{ color: savedTicketNo ? '#111' : '#d00' }}>
+                {savedTicketNo ?? '(New)'}
+              </span>
+            </div>
+            {draftTicketId && (
+              <button
+                type="button"
+                onClick={cancelDraft}
+                disabled={busy}
+                style={btnLight}
+                title="Delete the draft header and clear the form"
+              >
+                Cancel draft
+              </button>
+            )}
           </div>
         </div>
 
@@ -393,7 +429,7 @@ export default function TicketForm() {
           </div>
         ))}
         <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
-      </div}
+      </div>
 
       {/* SERVICES */}
       <div style={card}>
@@ -406,7 +442,7 @@ export default function TicketForm() {
             <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
             <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
             <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
-            <input value={row.notes}onChange={(e)=>setSvcField(i,'notes', e.target.value)} style={input}/>
+            <input value={row.notes} onChange={(e)=>setSvcField(i,'notes', e.target.value)} style={input}/>
             <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
           </div>
         ))}

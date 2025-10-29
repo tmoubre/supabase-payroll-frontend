@@ -2,88 +2,152 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
+function weekendingFrom(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr + 'T00:00:00');
+  // Sunday as week end: add days until Sunday
+  const dow = d.getDay(); // 0..6 (0 = Sun)
+  const add = (7 - dow) % 7;
+  const out = new Date(d);
+  out.setDate(out.getDate() + add);
+  return out.toISOString().slice(0, 10);
+}
+
 export default function TicketForm() {
-  // header fields
+  // ---------- header fields ----------
   const [jobId, setJobId] = useState('');
   const [jobSearch, setJobSearch] = useState('');
   const [ticketDate, setTicketDate] = useState('');
+  const [weekending, setWeekending] = useState('');
+  const [poNumber, setPoNumber] = useState('');
+  const [location, setLocation] = useState('');
+  const [customerName, setCustomerName] = useState(''); // read-only display
+  const [email, setEmail] = useState('');
   const [notes, setNotes] = useState('');
 
-  // reference data
+  // ---------- reference data ----------
   const [jobs, setJobs] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [paycodes, setPaycodes] = useState([]);
 
-  // dynamic lines
+  // suggestions
+  const [poOptions, setPoOptions] = useState([]);
+  const [locOptions, setLocOptions] = useState([]);
+  const [emailOptions, setEmailOptions] = useState([]);
+
+  // ---------- lines ----------
   const emptyLabor = { employee_id: '', pay_code_id: '', hours: '8', day_date: '' };
   const [labor, setLabor] = useState([{ ...emptyLabor }]);
+  const [equipment, setEquipment] = useState([]); // { code, qty, hours, rate, notes }
+  const [services, setServices] = useState([]);   // { code, qty, rate, notes }
 
-  // equipment: { code, qty, hours, rate, notes }
-  const [equipment, setEquipment] = useState([]);
-
-  // services: { code, qty, rate, notes }
-  const [services, setServices] = useState([]);
-
-  // ui state
+  // ---------- ui ----------
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
+  const [savedTicketNo, setSavedTicketNo] = useState(null);
 
-  // load lookups
+  // ---------- load lookups ----------
   useEffect(() => {
     let ignore = false;
     (async () => {
-      const [{ data: jobData, error: jobErr }, { data: empData }, { data: pcData }] =
-        await Promise.all([
-          supabase.from('jobs').select('job_id, job_number, po_number, work_order').order('job_number'),
-          supabase.from('employees').select('employee_id, name').order('name'),
-          supabase.from('paycodes').select('pay_code_id, code, description').order('code'),
-        ]);
+      // join jobs → customers to get customer_name for display
+      const jobsQ = supabase
+        .from('jobs')
+        .select('job_id, job_number, po_number, location, customer_id, customers:customer_id ( customer_name )')
+        .order('job_number');
+
+      const empQ = supabase
+        .from('employees')
+        .select('employee_id, name')
+        .order('name');
+
+      const pcQ = supabase
+        .from('paycodes')
+        .select('pay_code_id, code, description')
+        .order('code');
+
+      // suggestions for PO/location from jobs (distinct), emails from customers
+      const poQ = supabase.from('jobs').select('po_number').not('po_number', 'is', null);
+      const locQ = supabase.from('jobs').select('location').not('location', 'is', null);
+      const emQ = supabase.from('customers').select('contact_email').not('contact_email', 'is', null);
+
+      const [
+        { data: jobData },
+        { data: empData },
+        { data: pcData },
+        { data: poData },
+        { data: locData },
+        { data: emailData }
+      ] = await Promise.all([jobsQ, empQ, pcQ, poQ, locQ, emQ]);
+
       if (ignore) return;
-      if (jobErr) console.error(jobErr);
       setJobs(jobData || []);
       setEmployees(empData || []);
       setPaycodes(pcData || []);
+      setPoOptions(Array.from(new Set((poData || []).map(r => r.po_number).filter(Boolean))));
+      setLocOptions(Array.from(new Set((locData || []).map(r => r.location).filter(Boolean))));
+      setEmailOptions(Array.from(new Set((emailData || []).map(r => r.contact_email).filter(Boolean))));
     })();
     return () => { ignore = true; };
   }, []);
 
+  // filter jobs by search (job #, PO, WO, location)
   const filteredJobs = useMemo(() => {
     const s = jobSearch.trim().toLowerCase();
     if (!s) return jobs;
     return jobs.filter(j =>
       (j.job_number || '').toLowerCase().includes(s) ||
       (j.po_number || '').toLowerCase().includes(s) ||
-      (j.work_order || '').toLowerCase().includes(s)
+      (j.location || '').toLowerCase().includes(s)
     );
   }, [jobs, jobSearch]);
 
-  // ----- labor helpers -----
+  // when job changes, default PO, location, customer
+  useEffect(() => {
+    if (!jobId) {
+      setCustomerName('');
+      return;
+    }
+    const j = jobs.find(x => x.job_id === jobId);
+    if (!j) return;
+    if (j.po_number && !poNumber) setPoNumber(j.po_number);
+    if (j.location && !location) setLocation(j.location);
+    setCustomerName(j.customers?.customer_name || '');
+  }, [jobId, jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // recompute local preview of weekending whenever user picks date
+  useEffect(() => {
+    setWeekending(weekendingFrom(ticketDate));
+  }, [ticketDate]);
+
+  // ---------- labor helpers ----------
   const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
   const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
   const setLaborField = (i, field, value) =>
     setLabor(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ----- equipment helpers -----
+  // ---------- equipment helpers ----------
   const addEquipment = () => setEquipment(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]);
   const removeEquipment = (i) => setEquipment(r => r.filter((_, idx) => idx !== i));
   const setEqField = (i, field, value) =>
     setEquipment(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ----- services helpers -----
+  // ---------- services helpers ----------
   const addService = () => setServices(r => [...r, { code: '', qty: '', rate: '', notes: '' }]);
   const removeService = (i) => setServices(r => r.filter((_, idx) => idx !== i));
   const setSvcField = (i, field, value) =>
     setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // ----- submit calls the RPC -----
+  // ---------- submit via RPC ----------
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
+    setSavedTicketNo(null);
 
     if (!jobId) return setMessage({ type: 'error', text: 'Please select a Job.' });
     if (!ticketDate) return setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
 
-    // sanitize payloads (filter out blank rows)
+    // sanitize payloads
     const laborPayload = labor
       .filter(r => r.employee_id && r.pay_code_id && Number(r.hours) > 0)
       .map(r => ({
@@ -91,11 +155,10 @@ export default function TicketForm() {
         pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
         day_date: r.day_date || ticketDate,
-        // backend fills defaults for these when null
         craft_code: null,
         schedule: null,
         bill_craft_code: null,
-        bill_schedule: null,
+        bill_schedule: null
       }));
 
     const equipmentPayload = equipment.filter(r =>
@@ -112,10 +175,11 @@ export default function TicketForm() {
       p_job_id: jobId,
       p_ticket_date: ticketDate,
       p_notes: notes || null,
-      p_labor: laborPayload,         // [{ employee_id, pay_code_id, hours, day_date? }]
-      p_equipment: equipmentPayload, // [{ code, qty, hours, rate, notes }]
-      // p_materials omitted on purpose; SQL has a default so this is fine
-      p_services: servicesPayload    // [{ code, qty, rate?, notes }]
+      p_labor: laborPayload,
+      p_equipment: equipmentPayload,
+      p_materials: [],             // not used yet
+      p_services: servicesPayload
+      // NOTE: We can extend the RPC to accept p_extras and pass { poNumber, location, email } later
     });
 
     setBusy(false);
@@ -127,159 +191,190 @@ export default function TicketForm() {
     }
 
     const newId  = data?.[0]?.ticket_id;
-    const newNo  = data?.[0]?.ticket_number;     // numeric ticket #
-    const wkEnd  = data?.[0]?.weekending_date;   // computed in SQL
-    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
+    const newNo  = data?.[0]?.ticket_number;
+    const wkEnd  = data?.[0]?.weekending_date;
 
+    setSavedTicketNo(newNo);
     setMessage({ type: 'success', text: `Ticket #${newNo} created (Week ending ${wkEnd}).` });
 
-    // optionally reset form
-    setJobId('');
-    setTicketDate('');
-    setNotes('');
+    // reset lines but keep header to speed multiple entries
     setLabor([{ ...emptyLabor }]);
     setEquipment([]);
     setServices([]);
+    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
   }
 
-  // ----- UI -----
+  // ---------- UI ----------
   return (
     <div style={{ maxWidth: 1100, margin: '24px auto', padding: 16 }}>
-      <form onSubmit={handleSubmit}>
-        <div style={card}>
-          <h2 style={{ marginTop: 0 }}>Create Ticket + Lines</h2>
+      {/* HEADER CARD */}
+      <div style={card}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'baseline' }}>
+          <h2 style={{ marginTop: 0 }}>TimeTicket Entry</h2>
+          <div style={{ fontWeight:700 }}>
+            Ticket #&nbsp;
+            <span style={{ color: savedTicketNo ? '#111' : '#d00' }}>
+              {savedTicketNo ?? '(New)'}
+            </span>
+          </div>
+        </div>
 
-          <div style={grid3}>
-            <div>
-              <label>Search Jobs</label>
+        {/* grid like Access layout */}
+        <div style={grid2x}>
+          <label>Job #</label>
+          <div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
               <input
+                placeholder="Search by Job #, PO, Location"
                 value={jobSearch}
                 onChange={(e)=>setJobSearch(e.target.value)}
-                placeholder="Job #, PO, or WO"
                 style={input}
               />
-            </div>
-
-            <div>
-              <label>Job</label>
               <select value={jobId} onChange={(e)=>setJobId(e.target.value)} style={input}>
                 <option value="">— Select Job —</option>
                 {filteredJobs.map(j => (
                   <option key={j.job_id} value={j.job_id}>
-                    {j.job_number} · PO {j.po_number || '—'} · WO {j.work_order || '—'}
+                    {j.job_number} · PO {j.po_number || '—'} · {j.location || '—'}
                   </option>
                 ))}
               </select>
             </div>
-
-            <div>
-              <label>Ticket Date</label>
-              <input type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} style={input}/>
-            </div>
           </div>
 
-          <div style={{ marginTop: 10 }}>
-            <label>Notes (optional)</label>
-            <input value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="e.g., night shift" style={input}/>
+          <label>PO #</label>
+          <div>
+            <input list="po-list" value={poNumber} onChange={(e)=>setPoNumber(e.target.value)} style={input} />
+            <datalist id="po-list">
+              {poOptions.map((po,i)=>(<option key={i} value={po} />))}
+            </datalist>
+          </div>
+
+          <label>Location</label>
+          <div>
+            <input list="loc-list" value={location} onChange={(e)=>setLocation(e.target.value)} style={input} />
+            <datalist id="loc-list">
+              {locOptions.map((loc,i)=>(<option key={i} value={loc} />))}
+            </datalist>
+          </div>
+
+          <label>Customer</label>
+          <div>
+            <input value={customerName} readOnly style={{ ...input, background:'#f7f7f7' }} />
+          </div>
+
+          <label>TKT Date</label>
+          <div>
+            <input type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} style={input}/>
+          </div>
+
+          <label>Wk Ending Date</label>
+          <div>
+            <input value={weekending} readOnly style={{ ...input, background:'#f7f7f7' }} />
+          </div>
+
+          <label>Email</label>
+          <div>
+            <input list="email-list" value={email} onChange={(e)=>setEmail(e.target.value)} style={input} />
+            <datalist id="email-list">
+              {emailOptions.map((em,i)=>(<option key={i} value={em} />))}
+            </datalist>
+          </div>
+
+          <label>Notes</label>
+          <div>
+            <input placeholder="e.g., night shift" value={notes} onChange={(e)=>setNotes(e.target.value)} style={input}/>
           </div>
         </div>
+      </div>
 
-        {/* Labor */}
-        <div style={card}>
-          <h3 style={{ margin: '6px 0 12px' }}>Labor Lines</h3>
-
-          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, marginBottom:6 }}>
-            <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day</div><div></div>
-          </div>
-
-          {labor.map((row, i) => (
-            <div key={i} style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
-              <select value={row.employee_id} onChange={(e)=>setLaborField(i,'employee_id',e.target.value)} style={input}>
-                <option value="">Select employee</option>
-                {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.name}</option>)}
-              </select>
-
-              <select value={row.pay_code_id} onChange={(e)=>setLaborField(i,'pay_code_id',e.target.value)} style={input}>
-                <option value="">Pay code</option>
-                {paycodes.map(pc => <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code} — {pc.description}</option>)}
-              </select>
-
-              <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>setLaborField(i,'hours',e.target.value)} style={input} />
-              <input type="date" value={row.day_date} onChange={(e)=>setLaborField(i,'day_date',e.target.value)} style={input} />
-
-              <button type="button" onClick={()=>removeLabor(i)} style={btnLight}>Remove</button>
-            </div>
-          ))}
-
-          <button type="button" onClick={addLabor} style={btn}>+ Add labor</button>
+      {/* LABOR */}
+      <div style={card}>
+        <h3 style={{ margin: '6px 0 12px' }}>Labor Lines</h3>
+        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, marginBottom:6 }}>
+          <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day</div><div></div>
         </div>
 
-        {/* Equipment */}
-        <div style={card}>
-          <h3 style={{ margin: '6px 0 12px' }}>Equipment</h3>
+        {labor.map((row, i) => (
+          <div key={i} style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+            <select value={row.employee_id} onChange={(e)=>setLaborField(i,'employee_id',e.target.value)} style={input}>
+              <option value="">Select employee</option>
+              {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.name}</option>)}
+            </select>
 
-          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
-            <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Notes</div><div></div>
+            <select value={row.pay_code_id} onChange={(e)=>setLaborField(i,'pay_code_id',e.target.value)} style={input}>
+              <option value="">Pay code</option>
+              {paycodes.map(pc => <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code} — {pc.description}</option>)}
+            </select>
+
+            <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>setLaborField(i,'hours',e.target.value)} style={input} />
+            <input type="date" value={row.day_date} onChange={(e)=>setLaborField(i,'day_date',e.target.value)} style={input} />
+
+            <button type="button" onClick={()=>removeLabor(i)} style={btnLight}>Remove</button>
           </div>
+        ))}
+        <button type="button" onClick={addLabor} style={btn}>+ Add labor</button>
+      </div>
 
-          {equipment.map((row, i) => (
-            <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
-              <input value={row.code}  onChange={(e)=>setEqField(i,'code', e.target.value)} style={input}/>
-              <input value={row.qty}   onChange={(e)=>setEqField(i,'qty', e.target.value)} style={input}/>
-              <input value={row.hours} onChange={(e)=>setEqField(i,'hours', e.target.value)} style={input}/>
-              <input value={row.rate}  onChange={(e)=>setEqField(i,'rate', e.target.value)} style={input}/>
-              <input value={row.notes} onChange={(e)=>setEqField(i,'notes', e.target.value)} style={input}/>
-              <button type="button" onClick={()=>removeEquipment(i)} style={btnLight}>Remove</button>
-            </div>
-          ))}
-
-          <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
+      {/* EQUIPMENT */}
+      <div style={card}>
+        <h3 style={{ margin: '6px 0 12px' }}>Equipment</h3>
+        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+          <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Notes</div><div></div>
         </div>
-
-        {/* Services */}
-        <div style={card}>
-          <h3 style={{ margin: '6px 0 12px' }}>Services</h3>
-
-          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
-            <div>Code</div><div>Qty</div><div>Rate</div><div>Notes</div><div></div>
+        {equipment.map((row, i) => (
+          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+            <input value={row.code}  onChange={(e)=>setEqField(i,'code', e.target.value)} style={input}/>
+            <input value={row.qty}   onChange={(e)=>setEqField(i,'qty', e.target.value)} style={input}/>
+            <input value={row.hours} onChange={(e)=>setEqField(i,'hours', e.target.value)} style={input}/>
+            <input value={row.rate}  onChange={(e)=>setEqField(i,'rate', e.target.value)} style={input}/>
+            <input value={row.notes} onChange={(e)=>setEqField(i,'notes', e.target.value)} style={input}/>
+            <button type="button" onClick={()=>removeEquipment(i)} style={btnLight}>Remove</button>
           </div>
+        ))}
+        <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
+      </div>
 
-          {services.map((row, i) => (
-            <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
-              <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
-              <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
-              <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
-              <input value={row.notes}onChange={(e)=>setSvcField(i,'notes', e.target.value)} style={input}/>
-              <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
-            </div>
-          ))}
-
-          <button type="button" onClick={addService} style={btn}>+ Add service</button>
+      {/* SERVICES */}
+      <div style={card}>
+        <h3 style={{ margin: '6px 0 12px' }}>Services</h3>
+        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+          <div>Code</div><div>Qty</div><div>Rate</div><div>Notes</div><div></div>
         </div>
-
-        <div style={{ marginTop: 12 }}>
-          <button type="submit" disabled={busy} style={submitBtn}>
-            {busy ? 'Saving…' : 'Create Ticket + Lines'}
-          </button>
-        </div>
-
-        {message && (
-          <div style={{
-            marginTop: 12, padding: '10px 12px', borderRadius: 10,
-            background: message.type === 'error' ? '#fdeaea' : '#e8f7ed',
-            border: `1px solid ${message.type === 'error' ? '#f0c2c2' : '#b3e6c3'}`
-          }}>
-            {message.text}
+        {services.map((row, i) => (
+          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+            <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
+            <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
+            <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
+            <input value={row.notes}onChange={(e)=>setSvcField(i,'notes', e.target.value)} style={input}/>
+            <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
           </div>
-        )}
-      </form>
+        ))}
+        <button type="button" onClick={addService} style={btn}>+ Add service</button>
+      </div>
+
+      {/* SAVE */}
+      <div style={{ marginTop: 12 }}>
+        <button onClick={handleSubmit} disabled={busy} style={submitBtn}>
+          {busy ? 'Saving…' : 'Create Ticket + Lines'}
+        </button>
+      </div>
+
+      {message && (
+        <div style={{
+          marginTop: 12, padding: '10px 12px', borderRadius: 10,
+          background: message.type === 'error' ? '#fdeaea' : '#e8f7ed',
+          border: `1px solid ${message.type === 'error' ? '#f0c2c2' : '#b3e6c3'}`
+        }}>
+          {message.text}
+        </div>
+      )}
     </div>
   );
 }
 
 /* styles */
 const card = { background:'#fff', border:'1px solid #eee', borderRadius:12, padding:16, marginBottom:14, boxShadow:'0 2px 12px rgba(0,0,0,.04)' };
-const grid3 = { display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 };
+const grid2x = { display:'grid', gridTemplateColumns:'160px 1fr', gap:'10px 16px', alignItems:'center' };
 const input = { width:'100%', padding:'10px 12px', borderRadius:8, border:'1px solid #ddd' };
 const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
 const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };

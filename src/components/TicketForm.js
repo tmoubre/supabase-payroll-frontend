@@ -3,8 +3,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../supabaseClient';
 
 export default function TicketForm() {
-  // top-level ticket fields
+  // header fields
   const [jobId, setJobId] = useState('');
+  const [jobSearch, setJobSearch] = useState('');
   const [ticketDate, setTicketDate] = useState('');
   const [notes, setNotes] = useState('');
 
@@ -15,26 +16,33 @@ export default function TicketForm() {
 
   // dynamic lines
   const emptyLabor = { employee_id: '', pay_code_id: '', hours: '8', day_date: '' };
-  const [laborRows, setLaborRows] = useState([ { ...emptyLabor } ]);
+  const [labor, setLabor] = useState([{ ...emptyLabor }]);
 
-  const [equipmentRows, setEquipmentRows] = useState([]); // { code, qty, hours, rate, notes }
-  const [materialRows, setMaterialRows] = useState([]);   // { code, qty, unit, rate, notes }
-  const [serviceRows, setServiceRows] = useState([]);     // { code, qty, hours, rate, notes }
+  // equipment: { code, qty, hours, rate, notes }
+  const [equipment, setEquipment] = useState([]);
 
+  // materials: reserved for future; keep empty array
+  const [materials, setMaterials] = useState([]);
+
+  // services: { code, qty, rate, notes }
+  const [services, setServices] = useState([]);
+
+  // ui state
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
 
-  // ---------- data loads ----------
+  // load lookups
   useEffect(() => {
     let ignore = false;
     (async () => {
-      // RLS: requires policies for authenticated (already discussed)
-      const [{ data: jobData }, { data: empData }, { data: pcData }] = await Promise.all([
-        supabase.from('jobs').select('job_id, job_number, po_number, work_order').limit(5000),
-        supabase.from('employees').select('employee_id, emp_name').limit(5000),
-        supabase.from('paycodes').select('pay_code_id, code, description').limit(5000),
-      ]);
+      const [{ data: jobData, error: jobErr }, { data: empData }, { data: pcData }] =
+        await Promise.all([
+          supabase.from('jobs').select('job_id, job_number, po_number, work_order').order('job_number'),
+          supabase.from('employees').select('employee_id, name').order('name'),
+          supabase.from('paycodes').select('pay_code_id, code, description').order('code'),
+        ]);
       if (ignore) return;
+      if (jobErr) console.error(jobErr);
       setJobs(jobData || []);
       setEmployees(empData || []);
       setPaycodes(pcData || []);
@@ -42,8 +50,6 @@ export default function TicketForm() {
     return () => { ignore = true; };
   }, []);
 
-  // simple search box for jobs
-  const [jobSearch, setJobSearch] = useState('');
   const filteredJobs = useMemo(() => {
     const s = jobSearch.trim().toLowerCase();
     if (!s) return jobs;
@@ -54,80 +60,70 @@ export default function TicketForm() {
     );
   }, [jobs, jobSearch]);
 
-  // ---------- handlers ----------
-  function addLabor() { setLaborRows(r => [...r, { ...emptyLabor }]); }
-  function removeLabor(i) { setLaborRows(r => r.filter((_, idx) => idx !== i)); }
-  function updateLabor(i, field, value) {
-    setLaborRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  }
+  // ----- labor helpers -----
+  const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
+  const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
+  const setLaborField = (i, field, value) =>
+    setLabor(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  function addEquipment() { setEquipmentRows(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]); }
-  function updateEquipment(i, field, value) {
-    setEquipmentRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  }
-  function removeEquipment(i) { setEquipmentRows(r => r.filter((_, idx) => idx !== i)); }
+  // ----- equipment helpers -----
+  const addEquipment = () => setEquipment(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]);
+  const removeEquipment = (i) => setEquipment(r => r.filter((_, idx) => idx !== i));
+  const setEqField = (i, field, value) =>
+    setEquipment(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  function addMaterial() { setMaterialRows(r => [...r, { code: '', qty: '', unit: '', rate: '', notes: '' }]); }
-  function updateMaterial(i, field, value) {
-    setMaterialRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  }
-  function removeMaterial(i) { setMaterialRows(r => r.filter((_, idx) => idx !== i)); }
+  // ----- services helpers -----
+  const addService = () => setServices(r => [...r, { code: '', qty: '', rate: '', notes: '' }]);
+  const removeService = (i) => setServices(r => r.filter((_, idx) => idx !== i));
+  const setSvcField = (i, field, value) =>
+    setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  function addService() { setServiceRows(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]); }
-  function updateService(i, field, value) {
-    setServiceRows(rows => rows.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
-  }
-  function removeService(i) { setServiceRows(r => r.filter((_, idx) => idx !== i)); }
-
-  // ---------- submit ----------
+  // ----- submit calls the RPC (this is the complete snippet wired up) -----
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
 
-    // required fields
-    if (!jobId) {
-      setMessage({ type: 'error', text: 'Please select a Job before saving.' });
-      return;
-    }
-    if (!ticketDate) {
-      setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
-      return;
-    }
+    if (!jobId) return setMessage({ type: 'error', text: 'Please select a Job.' });
+    if (!ticketDate) return setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
 
-    const labor = laborRows
+    // sanitize payloads (filter out blank rows)
+    const laborPayload = labor
       .filter(r => r.employee_id && r.pay_code_id && Number(r.hours) > 0)
       .map(r => ({
         employee_id: r.employee_id,
         pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
         day_date: r.day_date || ticketDate,
+        // optional fields left null – backend fills defaults from employees
         craft_code: null,
         schedule: null,
         bill_craft_code: null,
-        bill_schedule: null
+        bill_schedule: null,
       }));
 
-    // equipment/materials/services can be left empty; send arrays anyway for future expansion
-    const equipment = equipmentRows.filter(r =>
+    const equipmentPayload = equipment.filter(r =>
       r.code || r.qty || r.hours || r.rate || r.notes
     );
-    const materials = materialRows.filter(r =>
-      r.code || r.qty || r.unit || r.rate || r.notes
-    );
-    const services = serviceRows.filter(r =>
-      r.code || r.qty || r.hours || r.rate || r.notes
+
+    const servicesPayload = services.filter(r =>
+      r.code || r.qty || r.rate || r.notes
     );
 
     setBusy(true);
+
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    // COMPLETE RPC CALL SNIPPET:
     const { data, error } = await supabase.rpc('create_ticket_with_lines', {
       p_job_id: jobId,
       p_ticket_date: ticketDate,
       p_notes: notes || null,
-      p_labor: labor,
-      p_equipment: equipment,
-      p_materials: materials,
-      p_services: services
+      p_labor: laborPayload,         // [{ employee_id, pay_code_id, hours, day_date? }]
+      p_equipment: equipmentPayload, // [{ code, qty, hours, rate, notes }]
+      p_materials: materials,        // [] for now
+      p_services: servicesPayload    // [{ code, qty, rate?, notes }]
     });
+    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
     setBusy(false);
 
     if (error) {
@@ -136,23 +132,25 @@ export default function TicketForm() {
       return;
     }
 
-    const newId = data?.[0]?.ticket_id;
-    const newNo = data?.[0]?.ticket_number; // <-- numeric ticket number from DB
-    setMessage({ type: 'success', text: `Ticket #${newNo} created.` });
+    // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    // COMPLETE "READ RETURN FIELDS" SNIPPET:
+    const newId  = data?.[0]?.ticket_id;
+    const newNo  = data?.[0]?.ticket_number;     // numeric ticket #
+    const wkEnd  = data?.[0]?.weekending_date;   // computed in SQL
 
-    // reset minimal fields but keep lines
+    setMessage({ type: 'success', text: `Ticket #${newNo} created (Week ending ${wkEnd}).` });
+    // <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+    // optionally reset form
     setJobId('');
     setTicketDate('');
     setNotes('');
-    setLaborRows([ { ...emptyLabor } ]);
-    setEquipmentRows([]);
-    setMaterialRows([]);
-    setServiceRows([]);
-
-    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo });
+    setLabor([{ ...emptyLabor }]);
+    setEquipment([]);
+    setServices([]);
   }
 
-  // ---------- UI ----------
+  // ----- UI -----
   return (
     <div style={{ maxWidth: 1100, margin: '24px auto', padding: 16 }}>
       <form onSubmit={handleSubmit}>
@@ -163,16 +161,16 @@ export default function TicketForm() {
             <div>
               <label>Search Jobs</label>
               <input
-                placeholder="Job #, PO, or WO"
                 value={jobSearch}
-                onChange={(e) => setJobSearch(e.target.value)}
+                onChange={(e)=>setJobSearch(e.target.value)}
+                placeholder="Job #, PO, or WO"
                 style={input}
               />
             </div>
 
             <div>
               <label>Job</label>
-              <select value={jobId} onChange={(e) => setJobId(e.target.value)} style={select}>
+              <select value={jobId} onChange={(e)=>setJobId(e.target.value)} style={input}>
                 <option value="">— Select Job —</option>
                 {filteredJobs.map(j => (
                   <option key={j.job_id} value={j.job_id}>
@@ -184,106 +182,86 @@ export default function TicketForm() {
 
             <div>
               <label>Ticket Date</label>
-              <input type="date" value={ticketDate} onChange={(e) => setTicketDate(e.target.value)} style={input} />
+              <input type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} style={input}/>
             </div>
           </div>
 
           <div style={{ marginTop: 10 }}>
             <label>Notes (optional)</label>
-            <input
-              placeholder="e.g., night shift, special access"
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              style={input}
-            />
+            <input value={notes} onChange={(e)=>setNotes(e.target.value)} placeholder="e.g., night shift" style={input}/>
           </div>
         </div>
 
         {/* Labor */}
         <div style={card}>
-          <SectionTitle>Labor Lines</SectionTitle>
+          <h3 style={{ margin: '6px 0 12px' }}>Labor Lines</h3>
 
-          <div style={{ fontWeight: 700, display: 'grid', gridTemplateColumns: '1.2fr 1fr .6fr .9fr auto', gap: 12, marginBottom: 6 }}>
-            <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day (optional)</div><div></div>
+          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, marginBottom:6 }}>
+            <div>Employee</div><div>Pay Code</div><div>Hours</div><div>Day</div><div></div>
           </div>
 
-          {laborRows.map((row, i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr .6fr .9fr auto', gap: 12, alignItems: 'center', marginBottom: 8 }}>
-              <select value={row.employee_id} onChange={(e)=>updateLabor(i, 'employee_id', e.target.value)} style={select}>
+          {labor.map((row, i) => (
+            <div key={i} style={{ display:'grid', gridTemplateColumns:'1.2fr 1fr .6fr .9fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+              <select value={row.employee_id} onChange={(e)=>setLaborField(i,'employee_id',e.target.value)} style={input}>
                 <option value="">Select employee</option>
-                {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.emp_name}</option>)}
+                {employees.map(emp => <option key={emp.employee_id} value={emp.employee_id}>{emp.name}</option>)}
               </select>
 
-              <select value={row.pay_code_id} onChange={(e)=>updateLabor(i, 'pay_code_id', e.target.value)} style={select}>
+              <select value={row.pay_code_id} onChange={(e)=>setLaborField(i,'pay_code_id',e.target.value)} style={input}>
                 <option value="">Pay code</option>
                 {paycodes.map(pc => <option key={pc.pay_code_id} value={pc.pay_code_id}>{pc.code} — {pc.description}</option>)}
               </select>
 
-              <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>updateLabor(i, 'hours', e.target.value)} style={input} />
+              <input type="number" min="0" step="0.25" value={row.hours} onChange={(e)=>setLaborField(i,'hours',e.target.value)} style={input} />
+              <input type="date" value={row.day_date} onChange={(e)=>setLaborField(i,'day_date',e.target.value)} style={input} />
 
-              <input type="date" value={row.day_date} onChange={(e)=>updateLabor(i, 'day_date', e.target.value)} style={input} />
-
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button type="button" onClick={() => removeLabor(i)} style={btnLight}>Remove</button>
-              </div>
+              <button type="button" onClick={()=>removeLabor(i)} style={btnLight}>Remove</button>
             </div>
           ))}
 
-          <div>
-            <button type="button" onClick={addLabor} style={btn}>
-              + Add labor
-            </button>
-          </div>
+          <button type="button" onClick={addLabor} style={btn}>+ Add labor</button>
         </div>
 
         {/* Equipment */}
         <div style={card}>
-          <SectionTitle>Equipment</SectionTitle>
-          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Hours','Rate','Notes']} />
-          {equipmentRows.map((row, i) => (
-            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
-              <input value={row.code} onChange={(e)=>updateEquipment(i,'code',e.target.value)} style={input}/>
-              <input value={row.qty} onChange={(e)=>updateEquipment(i,'qty',e.target.value)} style={input}/>
-              <input value={row.hours} onChange={(e)=>updateEquipment(i,'hours',e.target.value)} style={input}/>
-              <input value={row.rate} onChange={(e)=>updateEquipment(i,'rate',e.target.value)} style={input}/>
-              <input value={row.notes} onChange={(e)=>updateEquipment(i,'notes',e.target.value)} style={input}/>
-              <button type="button" onClick={()=>removeEquipment(i)} style={btnLight}>Remove</button>
-            </Row>
-          ))}
-          <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
-        </div>
+          <h3 style={{ margin: '6px 0 12px' }}>Equipment</h3>
 
-        {/* Materials */}
-        <div style={card}>
-          <SectionTitle>Materials</SectionTitle>
-          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Unit','Rate','Notes']} />
-          {materialRows.map((row, i) => (
-            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
-              <input value={row.code} onChange={(e)=>updateMaterial(i,'code',e.target.value)} style={input}/>
-              <input value={row.qty} onChange={(e)=>updateMaterial(i,'qty',e.target.value)} style={input}/>
-              <input value={row.unit} onChange={(e)=>updateMaterial(i,'unit',e.target.value)} style={input}/>
-              <input value={row.rate} onChange={(e)=>updateMaterial(i,'rate',e.target.value)} style={input}/>
-              <input value={row.notes} onChange={(e)=>updateMaterial(i,'notes',e.target.value)} style={input}/>
-              <button type="button" onClick={()=>removeMaterial(i)} style={btnLight}>Remove</button>
-            </Row>
+          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+            <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Notes</div><div></div>
+          </div>
+
+          {equipment.map((row, i) => (
+            <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+              <input value={row.code}  onChange={(e)=>setEqField(i,'code', e.target.value)} style={input}/>
+              <input value={row.qty}   onChange={(e)=>setEqField(i,'qty', e.target.value)} style={input}/>
+              <input value={row.hours} onChange={(e)=>setEqField(i,'hours', e.target.value)} style={input}/>
+              <input value={row.rate}  onChange={(e)=>setEqField(i,'rate', e.target.value)} style={input}/>
+              <input value={row.notes} onChange={(e)=>setEqField(i,'notes', e.target.value)} style={input}/>
+              <button type="button" onClick={()=>removeEquipment(i)} style={btnLight}>Remove</button>
+            </div>
           ))}
-          <button type="button" onClick={addMaterial} style={btn}>+ Add material</button>
+
+          <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
         </div>
 
         {/* Services */}
         <div style={card}>
-          <SectionTitle>Services</SectionTitle>
-          <HeaderRow cols="1fr .6fr .6fr .6fr 1.2fr" labels={['Code','Qty','Hours','Rate','Notes']} />
-          {serviceRows.map((row, i) => (
-            <Row key={i} cols="1fr .6fr .6fr .6fr 1.2fr auto">
-              <input value={row.code} onChange={(e)=>updateService(i,'code',e.target.value)} style={input}/>
-              <input value={row.qty} onChange={(e)=>updateService(i,'qty',e.target.value)} style={input}/>
-              <input value={row.hours} onChange={(e)=>updateService(i,'hours',e.target.value)} style={input}/>
-              <input value={row.rate} onChange={(e)=>updateService(i,'rate',e.target.value)} style={input}/>
-              <input value={row.notes} onChange={(e)=>updateService(i,'notes',e.target.value)} style={input}/>
+          <h3 style={{ margin: '6px 0 12px' }}>Services</h3>
+
+          <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+            <div>Code</div><div>Qty</div><div>Rate</div><div>Notes</div><div></div>
+          </div>
+
+          {services.map((row, i) => (
+            <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+              <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
+              <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
+              <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
+              <input value={row.notes}onChange={(e)=>setSvcField(i,'notes',e.target.value)} style={input}/>
               <button type="button" onClick={()=>removeService(i)} style={btnLight}>Remove</button>
-            </Row>
+            </div>
           ))}
+
           <button type="button" onClick={addService} style={btn}>+ Add service</button>
         </div>
 
@@ -307,30 +285,10 @@ export default function TicketForm() {
   );
 }
 
-/* ---------- tiny presentational helpers ---------- */
-function SectionTitle({ children }) {
-  return <h3 style={{ margin: '6px 0 12px' }}>{children}</h3>;
-}
-function HeaderRow({ cols, labels }) {
-  return (
-    <div style={{ fontWeight: 700, display: 'grid', gridTemplateColumns: cols, gap: 12, marginBottom: 6 }}>
-      {labels.map((x, i) => <div key={i}>{x}</div>)}
-    </div>
-  );
-}
-function Row({ cols, children }) {
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: cols, gap: 12, alignItems: 'center', marginBottom: 8 }}>
-      {children}
-    </div>
-  );
-}
-
-/* ---------- styles ---------- */
-const card = { background: '#fff', border: '1px solid #eee', borderRadius: 12, padding: 16, marginBottom: 14, boxShadow: '0 2px 12px rgba(0,0,0,.04)' };
-const grid3 = { display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 };
-const input = { width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid #ddd' };
-const select = input;
-const btn = { padding: '8px 12px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', cursor: 'pointer', fontWeight: 600 };
-const btnLight = { padding: '6px 10px', borderRadius: 8, border: '1px solid #ddd', background: '#fff', cursor: 'pointer' };
-const submitBtn = { width: '100%', maxWidth: 420, padding: '12px 14px', fontWeight: 800, borderRadius: 10, border: 'none', background: '#0f172a', color: '#fff', cursor: 'pointer' };
+/* styles */
+const card = { background:'#fff', border:'1px solid #eee', borderRadius:12, padding:16, marginBottom:14, boxShadow:'0 2px 12px rgba(0,0,0,.04)' };
+const grid3 = { display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12 };
+const input = { width:'100%', padding:'10px 12px', borderRadius:8, border:'1px solid #ddd' };
+const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
+const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };
+const submitBtn = { width:'100%', maxWidth:420, padding:'12px 14px', fontWeight:800, borderRadius:10, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer' };

@@ -45,6 +45,7 @@ export default function TicketForm() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [savedTicketNo, setSavedTicketNo] = useState(null);
+  const [draftTicketId, setDraftTicketId] = useState(null);
 
   // ---------- load lookups ----------
   useEffect(() => {
@@ -91,7 +92,7 @@ export default function TicketForm() {
     return () => { ignore = true; };
   }, []);
 
-  // filter jobs by search (job #, PO, WO, location)
+  // filter jobs by search (job #, PO, location)
   const filteredJobs = useMemo(() => {
     const s = jobSearch.trim().toLowerCase();
     if (!s) return jobs;
@@ -113,12 +114,55 @@ export default function TicketForm() {
     if (j.po_number && !poNumber) setPoNumber(j.po_number);
     if (j.location && !location) setLocation(j.location);
     setCustomerName(j.customers?.customer_name || '');
-  }, [jobId, jobs]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, jobs]);
 
   // recompute local preview of weekending whenever user picks date
   useEffect(() => {
     setWeekending(weekendingFrom(ticketDate));
   }, [ticketDate]);
+
+  // ---------- auto-create DRAFT HEADER when job + date are set ----------
+  useEffect(() => {
+    let ignore = false;
+
+    async function createHeaderIfNeeded() {
+      if (!jobId || !ticketDate || draftTicketId) return;
+
+      setBusy(true);
+      const { data, error } = await supabase.rpc('create_ticket_header', {
+        p_job_id: jobId,
+        p_ticket_date: ticketDate,
+        p_notes: notes || null,
+        p_extras: {
+          po_number: poNumber || null,
+          location: location || null,
+          email: email || null
+        }
+      });
+      setBusy(false);
+
+      if (ignore) return;
+
+      if (error) {
+        console.error('create_ticket_header error:', error);
+        setMessage({ type: 'error', text: 'Could not create draft ticket header.' });
+        return;
+      }
+
+      const row = Array.isArray(data) ? data[0] : data;
+      if (row?.ticket_id) {
+        setDraftTicketId(row.ticket_id);
+        setSavedTicketNo(row.ticket_number ?? null);
+        setWeekending(row.weekending_date ?? weekendingFrom(ticketDate));
+        setMessage({ type: 'success', text: `Draft created — Ticket #${row.ticket_number}` });
+      }
+    }
+
+    createHeaderIfNeeded();
+    return () => { ignore = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobId, ticketDate]);
 
   // ---------- labor helpers ----------
   const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
@@ -142,7 +186,6 @@ export default function TicketForm() {
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
-    setSavedTicketNo(null);
 
     if (!jobId) return setMessage({ type: 'error', text: 'Please select a Job.' });
     if (!ticketDate) return setMessage({ type: 'error', text: 'Please choose a Ticket Date.' });
@@ -171,37 +214,55 @@ export default function TicketForm() {
 
     setBusy(true);
 
-    const { data, error } = await supabase.rpc('create_ticket_with_lines', {
-      p_job_id: jobId,
-      p_ticket_date: ticketDate,
-      p_notes: notes || null,
-      p_labor: laborPayload,
-      p_equipment: equipmentPayload,
-      p_materials: [],             // not used yet
-      p_services: servicesPayload
-      // NOTE: We can extend the RPC to accept p_extras and pass { poNumber, location, email } later
-    });
+    let resp = { data: null, error: null };
+    if (draftTicketId) {
+      // append lines to the already-created header
+      const { error } = await supabase.rpc('append_lines_to_ticket', {
+        p_ticket_id: draftTicketId,
+        p_labor: laborPayload,
+        p_equipment: equipmentPayload,
+        p_services: servicesPayload
+      });
+      resp.error = error;
+      resp.data = [{ ticket_id: draftTicketId, ticket_number: savedTicketNo, weekending_date: weekending }];
+    } else {
+      // fallback (if for any reason the draft doesn't exist)
+      resp = await supabase.rpc('create_ticket_with_lines', {
+        p_job_id: jobId,
+        p_ticket_date: ticketDate,
+        p_notes: notes || null,
+        p_labor: laborPayload,
+        p_equipment: equipmentPayload,
+        p_materials: [],             // not used yet
+        p_services: servicesPayload
+      });
+    }
 
     setBusy(false);
 
-    if (error) {
-      console.error('RPC error:', error);
-      setMessage({ type: 'error', text: error.message || 'Failed to create ticket.' });
+    if (resp.error) {
+      console.error('RPC error:', resp.error);
+      setMessage({ type: 'error', text: resp.error.message || 'Failed to save ticket.' });
       return;
     }
 
-    const newId  = data?.[0]?.ticket_id;
-    const newNo  = data?.[0]?.ticket_number;
-    const wkEnd  = data?.[0]?.weekending_date;
+    const row = Array.isArray(resp.data) ? resp.data[0] : resp.data;
+    const newId  = row?.ticket_id || draftTicketId || null;
+    const newNo  = row?.ticket_number ?? savedTicketNo ?? '(New)';
+    const wkEnd  = row?.weekending_date ?? weekendingFrom(ticketDate);
 
+    // preserve savedTicketNo; show confirmation
+    if (newId && !draftTicketId) setDraftTicketId(newId);
     setSavedTicketNo(newNo);
-    setMessage({ type: 'success', text: `Ticket #${newNo} created (Week ending ${wkEnd}).` });
+    setWeekending(wkEnd);
+
+    setMessage({ type: 'success', text: `Ticket #${newNo} saved (Week ending ${wkEnd}).` });
 
     // reset lines but keep header to speed multiple entries
     setLabor([{ ...emptyLabor }]);
     setEquipment([]);
     setServices([]);
-    console.log('Created ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
+    console.log('Created/updated ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
   }
 
   // ---------- UI ----------
@@ -332,7 +393,7 @@ export default function TicketForm() {
           </div>
         ))}
         <button type="button" onClick={addEquipment} style={btn}>+ Add equipment</button>
-      </div>
+      </div}
 
       {/* SERVICES */}
       <div style={card}>
@@ -355,7 +416,7 @@ export default function TicketForm() {
       {/* SAVE */}
       <div style={{ marginTop: 12 }}>
         <button onClick={handleSubmit} disabled={busy} style={submitBtn}>
-          {busy ? 'Saving…' : 'Create Ticket + Lines'}
+          {busy ? 'Saving…' : (draftTicketId ? 'Save Lines to Ticket' : 'Create Ticket + Lines')}
         </button>
       </div>
 

@@ -1,5 +1,6 @@
 // src/components/TicketForm.js
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
 
 function weekendingFrom(dateStr) {
@@ -13,6 +14,10 @@ function weekendingFrom(dateStr) {
 }
 
 export default function TicketForm() {
+  const navigate = useNavigate();
+  const params = useParams();
+  const originTicketId = useMemo(() => params?.ticketId ?? null, [params?.ticketId]);
+
   // ---------- header fields ----------
   const [jobId, setJobId] = useState('');
   const [jobSearch, setJobSearch] = useState('');
@@ -53,6 +58,10 @@ export default function TicketForm() {
   const [message, setMessage] = useState(null);
   const [savedTicketNo, setSavedTicketNo] = useState(null);
   const [draftTicketId, setDraftTicketId] = useState(null);
+
+  // focus + weekending persist across “new ticket” resets
+  const jobSearchRef = useRef(null);
+  const lastWeekendingRef = useRef(null);
 
   // ---------- load lookups ----------
   useEffect(() => {
@@ -121,8 +130,12 @@ export default function TicketForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, jobs]);
 
-  // weekending preview
-  useEffect(() => { setWeekending(weekendingFrom(ticketDate)); }, [ticketDate]);
+  // weekending preview + remember last weekending to carry forward across resets
+  useEffect(() => {
+    const wk = weekendingFrom(ticketDate);
+    setWeekending(wk);
+    if (wk) lastWeekendingRef.current = wk;
+  }, [ticketDate]);
 
   // ---------- create DRAFT HEADER when job + date are set ----------
   useEffect(() => {
@@ -171,7 +184,7 @@ export default function TicketForm() {
       const ec = e.badge_id;
       if (ec == null) continue;
       const ed = String(ec).replace(/\D/g, '');
-      if (ed === digits || ed.padStart(5, '0') === lpad5) return e;
+      if (e && (ed === digits || ed.padStart(5, '0') === lpad5)) return e;
     }
     return null;
   }
@@ -258,23 +271,35 @@ export default function TicketForm() {
       setMessage({ type: 'error', text: error.message || 'Failed to cancel draft.' });
       return;
     }
+    resetFormToNewTicket();
+    setMessage({ type: 'success', text: 'Draft ticket removed.' });
+  }
+
+  // ---------- reset to a brand new ticket ----------
+  const resetFormToNewTicket = useCallback(() => {
     setDraftTicketId(null);
     setSavedTicketNo(null);
+
     setJobId('');
+    setJobSearch('');
     setTicketDate('');
-    setWeekending('');
+    // keep weekending from the last ticket if you want; otherwise set ''
+    setWeekending(lastWeekendingRef.current ?? '');
     setPoNumber('');
     setLocation('');
     setCustomerName('');
     setEmail('');
     setNotes('');
+
     setLabor([{ ...emptyLabor }]);
     setEquipment([]);
     setServices([]);
-    setMessage({ type: 'success', text: 'Draft ticket removed.' });
-  }
 
-  // ---------- submit ----------
+    // focus Job search quickly
+    setTimeout(() => jobSearchRef.current?.focus(), 0);
+  }, []);
+
+  // ---------- submit (SAVE LINES) ----------
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
@@ -331,21 +356,28 @@ export default function TicketForm() {
     }
 
     const row  = Array.isArray(resp.data) ? resp.data[0] : resp.data;
-    const newId = row?.ticket_id || draftTicketId || null;
     const newNo = row?.ticket_number ?? savedTicketNo ?? '(New)';
     const wkEnd = row?.weekending_date ?? weekendingFrom(ticketDate);
 
-    if (newId && !draftTicketId) setDraftTicketId(newId);
-    setSavedTicketNo(newNo);
-    setWeekending(wkEnd);
-
+    // Success message first…
     setMessage({ type: 'success', text: `Ticket #${newNo} saved (Week ending ${wkEnd}).` });
 
-    // reset lines but keep header
-    setLabor([{ ...emptyLabor }]);
-    setEquipment([]);
-    setServices([]);
+    // …then start a fresh, blank ticket immediately (your requested behavior)
+    resetFormToNewTicket();
   }
+
+  const handleViewTicket = () => {
+    const idToOpen =
+      originTicketId ??
+      draftTicketId ??
+      null;
+
+    if (!idToOpen) {
+      setMessage({ type: 'error', text: 'No ticket to view yet.' });
+      return;
+    }
+    navigate(`/tickets/${idToOpen}`);
+  };
 
   // ---------- UI ----------
   return (
@@ -361,6 +393,9 @@ export default function TicketForm() {
                 {savedTicketNo ?? '(New)'}
               </span>
             </div>
+            <button type="button" onClick={handleViewTicket} disabled={busy || (!originTicketId && !draftTicketId)} style={btnLight}>
+              View Ticket
+            </button>
             {draftTicketId && (
               <button type="button" onClick={cancelDraft} disabled={busy} style={btnLight}>
                 Cancel draft
@@ -375,6 +410,7 @@ export default function TicketForm() {
           <div>
             <div style={row2}>
               <input
+                ref={jobSearchRef}
                 placeholder="Search by Job #, PO, Location"
                 value={jobSearch}
                 onChange={(e)=>setJobSearch(e.target.value)}
@@ -524,7 +560,9 @@ export default function TicketForm() {
 
       {message && (
         <div style={{
-          marginTop: 12, padding: '10px 12px', borderRadius: 10,
+          marginTop: 12,
+          padding: '10px 12px',
+          borderRadius: 10,
           background: message.type === 'error' ? '#fdeaea' : '#e8f7ed',
           border: `1px solid ${message.type === 'error' ? '#f0c2c2' : '#b3e6c3'}`
         }}>

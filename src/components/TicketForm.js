@@ -157,7 +157,43 @@ export default function TicketForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, ticketDate]);
 
-  // ---------- helpers ----------
+  // ---------- helpers (Emp Code lookup) ----------
+  function normalizeEmpCode(v) {
+    const raw = (v ?? '').toString().trim();
+    const digits = raw.replace(/\D/g, '');
+    const lpad5 = digits.padStart(5, '0');
+    return { raw, digits, lpad5 };
+  }
+
+  function findEmployeeByCodeLocal(code, list) {
+    const { digits, lpad5 } = normalizeEmpCode(code);
+    if (!digits) return null;
+    for (const e of list) {
+      const ec = e.employee_code;
+      if (ec == null) continue;
+      const ed = String(ec).replace(/\D/g, '');
+      if (ed === digits || ed.padStart(5, '0') === lpad5) return e;
+    }
+    return null;
+  }
+
+  async function fetchEmployeeByCodeRemote(code) {
+    const { digits, lpad5 } = normalizeEmpCode(code);
+    if (!digits) return null;
+    const or = `employee_code.eq.${lpad5},employee_code.eq.${parseInt(digits, 10)}`;
+    const { data, error } = await supabase
+      .from('employees')
+      .select('employee_id, name, employee_code')
+      .or(or)
+      .maybeSingle();
+    if (error) {
+      console.warn('fetchEmployeeByCodeRemote error', error);
+      return null;
+    }
+    return data ?? null;
+  }
+
+  // ---------- other helpers ----------
   const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
   const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
   const setLaborField = (i, field, value) =>
@@ -173,16 +209,24 @@ export default function TicketForm() {
   const setSvcField = (i, field, value) =>
     setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // employee code -> employee_id autofill
-  function applyEmployeeCode(i, code) {
-    const trimmed = (code || '').trim().toLowerCase();
+  // employee code -> employee_id autofill (live + on enter/blur)
+  async function applyEmployeeCode(i, code) {
+    const local = findEmployeeByCodeLocal(code, employees);
+    if (local) {
+      setLabor(rows => {
+        const next = [...rows];
+        next[i] = { ...next[i], employee_code: code, employee_id: local.employee_id };
+        return next;
+      });
+      return;
+    }
+    const remote = await fetchEmployeeByCodeRemote(code);
     setLabor(rows => {
       const next = [...rows];
-      const hit = employees.find(e => (e.employee_code || '').toLowerCase() === trimmed);
-      if (hit) {
-        next[i] = { ...next[i], employee_code: code, employee_id: hit.employee_id };
+      if (remote) {
+        next[i] = { ...next[i], employee_code: remote.employee_code ?? code, employee_id: remote.employee_id };
       } else {
-        next[i] = { ...next[i], employee_code: code };
+        next[i] = { ...next[i], employee_code: code }; // keep typed value; no match
       }
       return next;
     });
@@ -208,7 +252,7 @@ export default function TicketForm() {
     const { error } = await supabase
       .from('time_tickets')
       .delete()
-      .eq('ticket_id', draftTicketId); // fix: correct PK column
+      .eq('ticket_id', draftTicketId); // correct PK
     setBusy(false);
     if (error) {
       console.error('cancelDraft error:', error);
@@ -426,10 +470,23 @@ export default function TicketForm() {
           <div key={i} style={{ display:'grid', gridTemplateColumns:'140px 1fr .9fr .6fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
             {/* Employee Code (autofills Employee) */}
             <input
-              placeholder="e.g., E123"
+              placeholder="e.g., 03170"
               value={row.employee_code || ''}
-              onChange={(e)=>setLaborField(i,'employee_code',e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setLaborField(i, 'employee_code', val);
+                if (val && val.replace(/\D/g, '').length >= 3) {
+                  // live lookup once 3+ digits entered
+                  applyEmployeeCode(i, val);
+                }
+              }}
               onBlur={(e)=>applyEmployeeCode(i, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  applyEmployeeCode(i, e.currentTarget.value);
+                }
+              }}
               style={input}
             />
 
@@ -522,4 +579,5 @@ const input = { width:'100%', padding:'10px 12px', borderRadius:8, border:'1px s
 const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
 const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };
 const submitBtn = { width:'100%', maxWidth:420, padding:'12px 14px', fontWeight:800, borderRadius:10, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer' };
+
 

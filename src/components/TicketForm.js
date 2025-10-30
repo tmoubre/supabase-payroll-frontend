@@ -59,9 +59,12 @@ export default function TicketForm() {
   const [savedTicketNo, setSavedTicketNo] = useState(null);
   const [draftTicketId, setDraftTicketId] = useState(null);
 
-  // focus + weekending persist across “new ticket” resets
+  // focus + keep last weekending across resets
   const jobSearchRef = useRef(null);
   const lastWeekendingRef = useRef(null);
+
+  // IMPORTANT: guard to prevent auto “create draft header” firing during resets
+  const resettingForNew = useRef(false);
 
   // ---------- load lookups ----------
   useEffect(() => {
@@ -141,6 +144,7 @@ export default function TicketForm() {
   useEffect(() => {
     let ignore = false;
     async function createHeaderIfNeeded() {
+      if (resettingForNew.current) return;     // <- block while we are resetting
       if (!jobId || !ticketDate || draftTicketId) return;
       setBusy(true);
       const { data, error } = await supabase.rpc('create_ticket_header', {
@@ -184,7 +188,7 @@ export default function TicketForm() {
       const ec = e.badge_id;
       if (ec == null) continue;
       const ed = String(ec).replace(/\D/g, '');
-      if (e && (ed === digits || ed.padStart(5, '0') === lpad5)) return e;
+      if (ed === digits || ed.padStart(5, '0') === lpad5) return e;
     }
     return null;
   }
@@ -257,6 +261,33 @@ export default function TicketForm() {
     return laborFilled || eqFilled || svcFilled;
   }
 
+  // ---------- reset to a brand new ticket ----------
+  const resetFormToNewTicket = useCallback(() => {
+    resettingForNew.current = true;           // block header creation during this tick
+    setDraftTicketId(null);
+    setSavedTicketNo(null);
+
+    setJobId('');
+    setJobSearch('');
+    setTicketDate('');
+    setWeekending(lastWeekendingRef.current ?? '');
+    setPoNumber('');
+    setLocation('');
+    setCustomerName('');
+    setEmail('');
+    setNotes('');
+
+    setLabor([{ ...emptyLabor }]);
+    setEquipment([]);
+    setServices([]);
+
+    setTimeout(() => {
+      jobSearchRef.current?.focus();
+      // allow header creation again AFTER state settles
+      resettingForNew.current = false;
+    }, 0);
+  }, []);
+
   async function cancelDraft() {
     if (!draftTicketId) return;
     if (hasAnyLineInput()) {
@@ -275,31 +306,7 @@ export default function TicketForm() {
     setMessage({ type: 'success', text: 'Draft ticket removed.' });
   }
 
-  // ---------- reset to a brand new ticket ----------
-  const resetFormToNewTicket = useCallback(() => {
-    setDraftTicketId(null);
-    setSavedTicketNo(null);
-
-    setJobId('');
-    setJobSearch('');
-    setTicketDate('');
-    // keep weekending from the last ticket if you want; otherwise set ''
-    setWeekending(lastWeekendingRef.current ?? '');
-    setPoNumber('');
-    setLocation('');
-    setCustomerName('');
-    setEmail('');
-    setNotes('');
-
-    setLabor([{ ...emptyLabor }]);
-    setEquipment([]);
-    setServices([]);
-
-    // focus Job search quickly
-    setTimeout(() => jobSearchRef.current?.focus(), 0);
-  }, []);
-
-  // ---------- submit (SAVE LINES) ----------
+  // ---------- submit (SAVE) ----------
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
@@ -359,10 +366,9 @@ export default function TicketForm() {
     const newNo = row?.ticket_number ?? savedTicketNo ?? '(New)';
     const wkEnd = row?.weekending_date ?? weekendingFrom(ticketDate);
 
-    // Success message first…
     setMessage({ type: 'success', text: `Ticket #${newNo} saved (Week ending ${wkEnd}).` });
 
-    // …then start a fresh, blank ticket immediately (your requested behavior)
+    // >>> Immediately start the next ticket (full clear, with guard)
     resetFormToNewTicket();
   }
 

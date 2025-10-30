@@ -40,14 +40,14 @@ export default function TicketForm() {
   const [emailOptions, setEmailOptions] = useState([]);
 
   // ---------- lines ----------
-  const emptyLabor = {
+  const emptyLabor = useMemo(() => ({
     employee_code: '',       // text field user types into (their badge)
     employee_id: '',
     employee_name: '',
     pay_code_id: '',
     hours: '8',
     _empNotFound: false
-  };
+  }), []);
   const [labor, setLabor] = useState([{ ...emptyLabor }]);
 
   const [equipment, setEquipment] = useState([]); // { code, qty, hours, rate, notes }
@@ -286,7 +286,7 @@ export default function TicketForm() {
       // allow header creation again AFTER state settles
       resettingForNew.current = false;
     }, 0);
-  }, []);
+  }, [emptyLabor]);
 
   async function cancelDraft() {
     if (!draftTicketId) return;
@@ -598,7 +598,7 @@ const eqHead = { fontWeight:700, display:'grid', gridTemplateColumns:'1fr 90px 9
 const eqRow  = { display:'grid', gridTemplateColumns:'1fr 90px 90px 110px 1.2fr 80px', gap:12, alignItems:'center', marginBottom:8 };
 
 const svcHead = { fontWeight:700, display:'grid', gridTemplateColumns:'1fr 90px 110px 1.2fr 80px', gap:12, marginBottom:6, alignItems:'center' };
-const svcRow  = { display:'grid', gridTemplateColumns:'1fr 90px 110px 1.2fr 80px', gap:12, alignItems:'center', marginBottom:8 };
+const svcRow  = { fontWeight:400, display:'grid', gridTemplateColumns:'1fr 90px 110px 1.2fr 80px', gap:12, alignItems:'center', marginBottom:8 };
 
 const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
 const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };

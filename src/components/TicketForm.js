@@ -5,8 +5,8 @@ import { supabase } from '../supabaseClient';
 function weekendingFrom(dateStr) {
   if (!dateStr) return '';
   const d = new Date(dateStr + 'T00:00:00');
-  const dow = d.getDay(); // 0..6 (0 = Sun)
-  const add = (7 - dow) % 7; // Sunday end
+  const dow = d.getDay();                  // 0..6 (Sun..Sat)
+  const add = (7 - dow) % 7;               // next Sunday
   const out = new Date(d);
   out.setDate(out.getDate() + add);
   return out.toISOString().slice(0, 10);
@@ -26,7 +26,7 @@ export default function TicketForm() {
 
   // ---------- reference data ----------
   const [jobs, setJobs] = useState([]);
-  const [employees, setEmployees] = useState([]);
+  const [employees, setEmployees] = useState([]);     // for fast local code matching
   const [paycodes, setPaycodes] = useState([]);
 
   // suggestions
@@ -35,10 +35,18 @@ export default function TicketForm() {
   const [emailOptions, setEmailOptions] = useState([]);
 
   // ---------- lines ----------
-  const emptyLabor = { employee_code: '', employee_id: '', pay_code_id: '', hours: '8' };
+  const emptyLabor = {
+    employee_code: '',
+    employee_id: '',
+    employee_name: '',
+    pay_code_id: '',
+    hours: '8',
+    _empNotFound: false
+  };
   const [labor, setLabor] = useState([{ ...emptyLabor }]);
+
   const [equipment, setEquipment] = useState([]); // { code, qty, hours, rate, notes }
-  const [services, setServices] = useState([]);   // { code, qty, rate, notes }
+  const [services, setServices]  = useState([]);  // { code, qty, rate, notes }
 
   // ---------- ui ----------
   const [busy, setBusy] = useState(false);
@@ -55,7 +63,6 @@ export default function TicketForm() {
         .select('job_id, job_number, po_number, location, customer_id, customers:customer_id ( customer_name )')
         .order('job_number');
 
-      // include employee_code for code-to-name autofill
       const empQ = supabase
         .from('employees')
         .select('employee_id, name, employee_code')
@@ -102,12 +109,9 @@ export default function TicketForm() {
     );
   }, [jobs, jobSearch]);
 
-  // when job changes, default PO, location, customer
+  // defaults when job changes
   useEffect(() => {
-    if (!jobId) {
-      setCustomerName('');
-      return;
-    }
+    if (!jobId) { setCustomerName(''); return; }
     const j = jobs.find(x => x.job_id === jobId);
     if (!j) return;
     if (j.po_number && !poNumber) setPoNumber(j.po_number);
@@ -116,12 +120,10 @@ export default function TicketForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, jobs]);
 
-  // recompute local preview of weekending whenever user picks date
-  useEffect(() => {
-    setWeekending(weekendingFrom(ticketDate));
-  }, [ticketDate]);
+  // weekending preview
+  useEffect(() => { setWeekending(weekendingFrom(ticketDate)); }, [ticketDate]);
 
-  // ---------- auto-create DRAFT HEADER when job + date are set ----------
+  // ---------- create DRAFT HEADER when job + date are set ----------
   useEffect(() => {
     let ignore = false;
     async function createHeaderIfNeeded() {
@@ -131,11 +133,7 @@ export default function TicketForm() {
         p_job_id: jobId,
         p_ticket_date: ticketDate,
         p_notes: notes || null,
-        p_extras: {
-          po_number: poNumber || null,
-          location: location || null,
-          email: email || null
-        }
+        p_extras: { po_number: poNumber || null, location: location || null, email: email || null }
       });
       setBusy(false);
       if (ignore) return;
@@ -157,7 +155,7 @@ export default function TicketForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, ticketDate]);
 
-  // ---------- helpers (Emp Code lookup) ----------
+  // ---------- Emp Code helpers ----------
   function normalizeEmpCode(v) {
     const raw = (v ?? '').toString().trim();
     const digits = raw.replace(/\D/g, '');
@@ -165,10 +163,10 @@ export default function TicketForm() {
     return { raw, digits, lpad5 };
   }
 
-  function findEmployeeByCodeLocal(code, list) {
+  function findEmployeeByCodeLocal(code) {
     const { digits, lpad5 } = normalizeEmpCode(code);
     if (!digits) return null;
-    for (const e of list) {
+    for (const e of employees) {
       const ec = e.employee_code;
       if (ec == null) continue;
       const ed = String(ec).replace(/\D/g, '');
@@ -186,36 +184,32 @@ export default function TicketForm() {
       .select('employee_id, name, employee_code')
       .or(or)
       .maybeSingle();
-    if (error) {
-      console.warn('fetchEmployeeByCodeRemote error', error);
-      return null;
-    }
+    if (error) { console.warn('fetchEmployeeByCodeRemote error', error); }
     return data ?? null;
   }
 
-  // ---------- other helpers ----------
-  const addLabor = () => setLabor(r => [...r, { ...emptyLabor }]);
-  const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
+  // ---------- form helpers ----------
   const setLaborField = (i, field, value) =>
     setLabor(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  const addEquipment = () => setEquipment(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]);
-  const removeEquipment = (i) => setEquipment(r => r.filter((_, idx) => idx !== i));
-  const setEqField = (i, field, value) =>
-    setEquipment(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  const addLabor    = () => setLabor(r => [...r, { ...emptyLabor }]);
+  const removeLabor = (i) => setLabor(r => r.filter((_, idx) => idx !== i));
 
-  const addService = () => setServices(r => [...r, { code: '', qty: '', rate: '', notes: '' }]);
-  const removeService = (i) => setServices(r => r.filter((_, idx) => idx !== i));
-  const setSvcField = (i, field, value) =>
-    setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+  const addEquipment   = () => setEquipment(r => [...r, { code: '', qty: '', hours: '', rate: '', notes: '' }]);
+  const removeEquipment= (i) => setEquipment(r => r.filter((_, idx) => idx !== i));
+  const setEqField     = (i, field, value) => setEquipment(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // employee code -> employee_id autofill (live + on enter/blur)
+  const addService   = () => setServices(r => [...r, { code: '', qty: '', rate: '', notes: '' }]);
+  const removeService= (i) => setServices(r => r.filter((_, idx) => idx !== i));
+  const setSvcField  = (i, field, value) => setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
+
+  // auto-fill Employee from Emp Code (live + enter/blur) and set helper state
   async function applyEmployeeCode(i, code) {
-    const local = findEmployeeByCodeLocal(code, employees);
+    const local = findEmployeeByCodeLocal(code);
     if (local) {
       setLabor(rows => {
         const next = [...rows];
-        next[i] = { ...next[i], employee_code: code, employee_id: local.employee_id };
+        next[i] = { ...next[i], employee_code: code, employee_id: local.employee_id, employee_name: local.name, _empNotFound: false };
         return next;
       });
       return;
@@ -224,15 +218,21 @@ export default function TicketForm() {
     setLabor(rows => {
       const next = [...rows];
       if (remote) {
-        next[i] = { ...next[i], employee_code: remote.employee_code ?? code, employee_id: remote.employee_id };
+        next[i] = {
+          ...next[i],
+          employee_code: remote.employee_code ?? code,
+          employee_id: remote.employee_id,
+          employee_name: remote.name,
+          _empNotFound: false
+        };
       } else {
-        next[i] = { ...next[i], employee_code: code }; // keep typed value; no match
+        next[i] = { ...next[i], employee_code: code, employee_id: '', employee_name: '', _empNotFound: !!code };
       }
       return next;
     });
   }
 
-  // detect any line inputs (for cancel confirmation)
+  // any line inputs (for cancel confirm)
   function hasAnyLineInput() {
     const laborFilled = labor.some(r =>
       r.employee_id || r.employee_code || r.pay_code_id || (Number(r.hours) || 0) > 0
@@ -249,17 +249,13 @@ export default function TicketForm() {
       if (!ok) return;
     }
     setBusy(true);
-    const { error } = await supabase
-      .from('time_tickets')
-      .delete()
-      .eq('ticket_id', draftTicketId); // correct PK
+    const { error } = await supabase.from('time_tickets').delete().eq('ticket_id', draftTicketId);
     setBusy(false);
     if (error) {
       console.error('cancelDraft error:', error);
       setMessage({ type: 'error', text: error.message || 'Failed to cancel draft.' });
       return;
     }
-    // clear everything
     setDraftTicketId(null);
     setSavedTicketNo(null);
     setJobId('');
@@ -276,7 +272,7 @@ export default function TicketForm() {
     setMessage({ type: 'success', text: 'Draft ticket removed.' });
   }
 
-  // ---------- submit via RPC ----------
+  // ---------- submit ----------
   async function handleSubmit(e) {
     e.preventDefault();
     setMessage(null);
@@ -290,21 +286,15 @@ export default function TicketForm() {
         employee_id: r.employee_id,
         pay_code_id: r.pay_code_id,
         hours: Number(r.hours),
-        // always match the ticket date
-        day_date: ticketDate,
+        day_date: ticketDate, // tie to ticket date
         craft_code: null,
         schedule: null,
         bill_craft_code: null,
         bill_schedule: null
       }));
 
-    const equipmentPayload = equipment.filter(r =>
-      r.code || r.qty || r.hours || r.rate || r.notes
-    );
-
-    const servicesPayload = services.filter(r =>
-      r.code || r.qty || r.rate || r.notes
-    );
+    const equipmentPayload = equipment.filter(r => r.code || r.qty || r.hours || r.rate || r.notes);
+    const servicesPayload  = services.filter(r => r.code || r.qty || r.rate || r.notes);
 
     setBusy(true);
 
@@ -338,10 +328,10 @@ export default function TicketForm() {
       return;
     }
 
-    const row = Array.isArray(resp.data) ? resp.data[0] : resp.data;
-    const newId  = row?.ticket_id || draftTicketId || null;
-    const newNo  = row?.ticket_number ?? savedTicketNo ?? '(New)';
-    const wkEnd  = row?.weekending_date ?? weekendingFrom(ticketDate);
+    const row  = Array.isArray(resp.data) ? resp.data[0] : resp.data;
+    const newId = row?.ticket_id || draftTicketId || null;
+    const newNo = row?.ticket_number ?? savedTicketNo ?? '(New)';
+    const wkEnd = row?.weekending_date ?? weekendingFrom(ticketDate);
 
     if (newId && !draftTicketId) setDraftTicketId(newId);
     setSavedTicketNo(newNo);
@@ -349,20 +339,19 @@ export default function TicketForm() {
 
     setMessage({ type: 'success', text: `Ticket #${newNo} saved (Week ending ${wkEnd}).` });
 
-    // reset lines but keep header visible
+    // reset lines but keep header
     setLabor([{ ...emptyLabor }]);
     setEquipment([]);
     setServices([]);
-    console.log('Created/updated ticket:', { ticket_id: newId, ticket_number: newNo, weekending: wkEnd });
   }
 
   // ---------- UI ----------
   return (
-    <div style={{ maxWidth: 1100, margin: '24px auto', padding: 16 }}>
+    <div style={pageWrap}>
       {/* HEADER CARD */}
       <div style={card}>
-        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap: 12 }}>
-          <h2 style={{ marginTop: 0 }}>TimeTicket Entry</h2>
+        <div style={headerRow}>
+          <h2 style={{ margin: 0 }}>TimeTicket Entry</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ fontWeight:700 }}>
               Ticket #&nbsp;
@@ -371,24 +360,18 @@ export default function TicketForm() {
               </span>
             </div>
             {draftTicketId && (
-              <button
-                type="button"
-                onClick={cancelDraft}
-                disabled={busy}
-                style={btnLight}
-                title="Delete the draft header and clear the form"
-              >
+              <button type="button" onClick={cancelDraft} disabled={busy} style={btnLight}>
                 Cancel draft
               </button>
             )}
           </div>
         </div>
 
-        {/* grid like Access layout */}
+        {/* Compact two-column grid */}
         <div style={grid2x}>
           <label>Job #</label>
           <div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+            <div style={row2}>
               <input
                 placeholder="Search by Job #, PO, Location"
                 value={jobSearch}
@@ -409,46 +392,32 @@ export default function TicketForm() {
           <label>PO #</label>
           <div>
             <input list="po-list" value={poNumber} onChange={(e)=>setPoNumber(e.target.value)} style={input} />
-            <datalist id="po-list">
-              {poOptions.map((po,i)=>(<option key={i} value={po} />))}
-            </datalist>
+            <datalist id="po-list">{poOptions.map((po,i)=>(<option key={i} value={po} />))}</datalist>
           </div>
 
           <label>Location</label>
           <div>
             <input list="loc-list" value={location} onChange={(e)=>setLocation(e.target.value)} style={input} />
-            <datalist id="loc-list">
-              {locOptions.map((loc,i)=>(<option key={i} value={loc} />))}
-            </datalist>
+            <datalist id="loc-list">{locOptions.map((loc,i)=>(<option key={i} value={loc} />))}</datalist>
           </div>
 
           <label>Customer</label>
-          <div>
-            <input value={customerName} readOnly style={{ ...input, background:'#f7f7f7' }} />
-          </div>
+          <div><input value={customerName} readOnly style={inputRO} /></div>
 
           <label>TKT Date</label>
-          <div>
-            <input type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} style={input}/>
-          </div>
+          <div><input type="date" value={ticketDate} onChange={(e)=>setTicketDate(e.target.value)} style={input}/></div>
 
           <label>Wk Ending Date</label>
-          <div>
-            <input value={weekending} readOnly style={{ ...input, background:'#f7f7f7' }} />
-          </div>
+          <div><input value={weekending} readOnly style={inputRO} /></div>
 
           <label>Email</label>
           <div>
             <input list="email-list" value={email} onChange={(e)=>setEmail(e.target.value)} style={input} />
-            <datalist id="email-list">
-              {emailOptions.map((em,i)=>(<option key={i} value={em} />))}
-            </datalist>
+            <datalist id="email-list">{emailOptions.map((em,i)=>(<option key={i} value={em} />))}</datalist>
           </div>
 
           <label>Notes</label>
-          <div>
-            <input placeholder="e.g., night shift" value={notes} onChange={(e)=>setNotes(e.target.value)} style={input}/>
-          </div>
+          <div><input placeholder="e.g., night shift" value={notes} onChange={(e)=>setNotes(e.target.value)} style={input}/></div>
         </div>
       </div>
 
@@ -457,7 +426,7 @@ export default function TicketForm() {
         <h3 style={{ margin: '6px 0 12px' }}>Labor Lines</h3>
 
         {/* header */}
-        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'140px 1fr .9fr .6fr auto', gap:12, marginBottom:6 }}>
+        <div style={laborHead}>
           <div>Emp Code</div>
           <div>Employee</div>
           <div>Pay Code</div>
@@ -467,38 +436,30 @@ export default function TicketForm() {
 
         {/* rows */}
         {labor.map((row, i) => (
-          <div key={i} style={{ display:'grid', gridTemplateColumns:'140px 1fr .9fr .6fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
-            {/* Employee Code (autofills Employee) */}
-            <input
-              placeholder="e.g., 03170"
-              value={row.employee_code || ''}
-              onChange={(e) => {
-                const val = e.target.value;
-                setLaborField(i, 'employee_code', val);
-                if (val && val.replace(/\D/g, '').length >= 3) {
-                  // live lookup once 3+ digits entered
-                  applyEmployeeCode(i, val);
-                }
-              }}
-              onBlur={(e)=>applyEmployeeCode(i, e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  applyEmployeeCode(i, e.currentTarget.value);
-                }
-              }}
-              style={input}
-            />
+          <div key={i} style={laborRow}>
+            {/* Emp Code (live lookup) */}
+            <div>
+              <input
+                placeholder="e.g., 03170"
+                value={row.employee_code || ''}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setLaborField(i, 'employee_code', val);
+                  if (val && val.replace(/\D/g, '').length >= 3) applyEmployeeCode(i, val);
+                }}
+                onBlur={(e)=>applyEmployeeCode(i, e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); applyEmployeeCode(i, e.currentTarget.value); }
+                }}
+                style={{ ...input, ...(row._empNotFound ? inputError : null) }}
+              />
+              {row._empNotFound && (
+                <div style={hint}>No employee found for that code</div>
+              )}
+            </div>
 
-            {/* Employee */}
-            <select value={row.employee_id} onChange={(e)=>setLaborField(i,'employee_id',e.target.value)} style={input}>
-              <option value="">Select employee</option>
-              {employees.map(emp => (
-                <option key={emp.employee_id} value={emp.employee_id}>
-                  {emp.employee_code ? `${emp.employee_code} — ` : ''}{emp.name}
-                </option>
-              ))}
-            </select>
+            {/* Employee Name (read-only, no dropdown) */}
+            <input value={row.employee_name || ''} readOnly placeholder="(auto)" style={inputRO} />
 
             {/* Pay Code */}
             <select value={row.pay_code_id} onChange={(e)=>setLaborField(i,'pay_code_id',e.target.value)} style={input}>
@@ -518,11 +479,11 @@ export default function TicketForm() {
       {/* EQUIPMENT */}
       <div style={card}>
         <h3 style={{ margin: '6px 0 12px' }}>Equipment</h3>
-        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+        <div style={eqHead}>
           <div>Code</div><div>Qty</div><div>Hours</div><div>Rate</div><div>Notes</div><div></div>
         </div>
         {equipment.map((row, i) => (
-          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+          <div key={i} style={eqRow}>
             <input value={row.code}  onChange={(e)=>setEqField(i,'code', e.target.value)} style={input}/>
             <input value={row.qty}   onChange={(e)=>setEqField(i,'qty', e.target.value)} style={input}/>
             <input value={row.hours} onChange={(e)=>setEqField(i,'hours', e.target.value)} style={input}/>
@@ -537,11 +498,11 @@ export default function TicketForm() {
       {/* SERVICES */}
       <div style={card}>
         <h3 style={{ margin: '6px 0 12px' }}>Services</h3>
-        <div style={{ fontWeight: 700, display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, marginBottom:6 }}>
+        <div style={svcHead}>
           <div>Code</div><div>Qty</div><div>Rate</div><div>Notes</div><div></div>
         </div>
         {services.map((row, i) => (
-          <div key={i} style={{ display:'grid', gridTemplateColumns:'1fr .6fr .6fr 1.2fr auto', gap:12, alignItems:'center', marginBottom:8 }}>
+          <div key={i} style={svcRow}>
             <input value={row.code} onChange={(e)=>setSvcField(i,'code', e.target.value)} style={input}/>
             <input value={row.qty}  onChange={(e)=>setSvcField(i,'qty', e.target.value)}  style={input}/>
             <input value={row.rate} onChange={(e)=>setSvcField(i,'rate', e.target.value)} style={input}/>
@@ -573,11 +534,26 @@ export default function TicketForm() {
 }
 
 /* styles */
+const pageWrap = { maxWidth: 960, margin: '20px auto', padding: '0 14px' };
 const card = { background:'#fff', border:'1px solid #eee', borderRadius:12, padding:16, marginBottom:14, boxShadow:'0 2px 12px rgba(0,0,0,.04)' };
-const grid2x = { display:'grid', gridTemplateColumns:'160px 1fr', gap:'10px 16px', alignItems:'center' };
+const headerRow = { display:'flex', justifyContent:'space-between', alignItems:'center', gap:12, marginBottom:6 };
+const grid2x = { display:'grid', gridTemplateColumns:'140px minmax(240px, 1fr)', gap:'10px 14px', alignItems:'center' };
+const row2 = { display:'grid', gridTemplateColumns:'minmax(200px, 1fr) minmax(220px, 1fr)', gap:8 };
+
 const input = { width:'100%', padding:'10px 12px', borderRadius:8, border:'1px solid #ddd' };
+const inputRO = { ...input, background:'#f7f7f7' };
+const inputError = { borderColor:'#e26b6b', background:'#fff7f7' };
+const hint = { fontSize:12, color:'#b93b3b', marginTop:4 };
+
+const laborHead = { fontWeight:700, display:'grid', gridTemplateColumns:'120px 1fr 200px 90px 80px', gap:12, marginBottom:6, alignItems:'center' };
+const laborRow  = { display:'grid', gridTemplateColumns:'120px 1fr 200px 90px 80px', gap:12, alignItems:'center', marginBottom:8 };
+
+const eqHead = { fontWeight:700, display:'grid', gridTemplateColumns:'1fr 90px 90px 110px 1.2fr 80px', gap:12, marginBottom:6, alignItems:'center' };
+const eqRow  = { display:'grid', gridTemplateColumns:'1fr 90px 90px 110px 1.2fr 80px', gap:12, alignItems:'center', marginBottom:8 };
+
+const svcHead = { fontWeight:700, display:'grid', gridTemplateColumns:'1fr 90px 110px 1.2fr 80px', gap:12, marginBottom:6, alignItems:'center' };
+const svcRow  = { display:'grid', gridTemplateColumns:'1fr 90px 110px 1.2fr 80px', gap:12, alignItems:'center', marginBottom:8 };
+
 const btn = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer', fontWeight:600 };
 const btnLight = { padding:'6px 10px', borderRadius:8, border:'1px solid #ddd', background:'#fff', cursor:'pointer' };
 const submitBtn = { width:'100%', maxWidth:420, padding:'12px 14px', fontWeight:800, borderRadius:10, border:'none', background:'#0f172a', color:'#fff', cursor:'pointer' };
-
-

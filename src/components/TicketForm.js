@@ -36,7 +36,7 @@ export default function TicketForm() {
 
   // ---------- lines ----------
   const emptyLabor = {
-    employee_code: '',
+    employee_code: '',       // text field user types into (their badge)
     employee_id: '',
     employee_name: '',
     pay_code_id: '',
@@ -63,10 +63,11 @@ export default function TicketForm() {
         .select('job_id, job_number, po_number, location, customer_id, customers:customer_id ( customer_name )')
         .order('job_number');
 
+      // NOTE: use badge_id instead of employee_code
       const empQ = supabase
         .from('employees')
-        .select('employee_id, name, employee_code')
-        .order('employee_code', { nulls: 'last' })
+        .select('employee_id, name, badge_id')
+        .order('badge_id', { nulls: 'last' })
         .order('name');
 
       const pcQ = supabase
@@ -155,7 +156,7 @@ export default function TicketForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jobId, ticketDate]);
 
-  // ---------- Emp Code helpers ----------
+  // ---------- Emp Code helpers (match badge_id) ----------
   function normalizeEmpCode(v) {
     const raw = (v ?? '').toString().trim();
     const digits = raw.replace(/\D/g, '');
@@ -163,11 +164,11 @@ export default function TicketForm() {
     return { raw, digits, lpad5 };
   }
 
-  function findEmployeeByCodeLocal(code) {
+  function findEmployeeByBadgeLocal(code) {
     const { digits, lpad5 } = normalizeEmpCode(code);
     if (!digits) return null;
     for (const e of employees) {
-      const ec = e.employee_code;
+      const ec = e.badge_id;
       if (ec == null) continue;
       const ed = String(ec).replace(/\D/g, '');
       if (ed === digits || ed.padStart(5, '0') === lpad5) return e;
@@ -175,16 +176,17 @@ export default function TicketForm() {
     return null;
   }
 
-  async function fetchEmployeeByCodeRemote(code) {
+  async function fetchEmployeeByBadgeRemote(code) {
     const { digits, lpad5 } = normalizeEmpCode(code);
     if (!digits) return null;
-    const or = `employee_code.eq.${lpad5},employee_code.eq.${parseInt(digits, 10)}`;
+    // Works if badge_id is stored as text ('01370') or numeric (1370)
+    const or = `badge_id.eq.${lpad5},badge_id.eq.${parseInt(digits, 10)}`;
     const { data, error } = await supabase
       .from('employees')
-      .select('employee_id, name, employee_code')
+      .select('employee_id, name, badge_id')
       .or(or)
       .maybeSingle();
-    if (error) { console.warn('fetchEmployeeByCodeRemote error', error); }
+    if (error) { console.warn('fetchEmployeeByBadgeRemote error', error); }
     return data ?? null;
   }
 
@@ -203,9 +205,9 @@ export default function TicketForm() {
   const removeService= (i) => setServices(r => r.filter((_, idx) => idx !== i));
   const setSvcField  = (i, field, value) => setServices(rows => rows.map((r, idx) => (idx === i ? { ...r, [field]: value } : r)));
 
-  // auto-fill Employee from Emp Code (live + enter/blur) and set helper state
+  // auto-fill Employee from Emp Code (badge_id)
   async function applyEmployeeCode(i, code) {
-    const local = findEmployeeByCodeLocal(code);
+    const local = findEmployeeByBadgeLocal(code);
     if (local) {
       setLabor(rows => {
         const next = [...rows];
@@ -214,13 +216,13 @@ export default function TicketForm() {
       });
       return;
     }
-    const remote = await fetchEmployeeByCodeRemote(code);
+    const remote = await fetchEmployeeByBadgeRemote(code);
     setLabor(rows => {
       const next = [...rows];
       if (remote) {
         next[i] = {
           ...next[i],
-          employee_code: remote.employee_code ?? code,
+          employee_code: remote.badge_id ?? code,
           employee_id: remote.employee_id,
           employee_name: remote.name,
           _empNotFound: false
@@ -440,7 +442,7 @@ export default function TicketForm() {
             {/* Emp Code (live lookup) */}
             <div>
               <input
-                placeholder="e.g., 03170"
+                placeholder="e.g., 01370"
                 value={row.employee_code || ''}
                 onChange={(e) => {
                   const val = e.target.value;
